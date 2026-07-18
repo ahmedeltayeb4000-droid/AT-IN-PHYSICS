@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+@theme {
+  --color-navy: #071a35;
+  --color-surface: #0c2548;
+  --color-cyan: #0ea5e9;
+  --color-cyan-light: #38bdf8;
+  --color-accent: #0ea5e9;
+  --color-accent-strong: #0284c7;
+  --color-canvas: var(--at-canvas);
+  --color-panel: var(--at-panel);
+  --color-panel-hover: var(--at-panel-hover);
+  --color-border: var(--at-border);
+  --color-text: var(--at-text);
+  --color-text-muted: var(--at-text-muted);
+  --color-text-subtle: var(--at-text-subtle);
+  --color-danger: #f87171;
+  --font-display: var(--font-english);
+  --font-arabic: var(--font-arabic);
+  --spacing-section: 5rem;
+}
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --at-canvas: #071a35;
+  --at-panel: #0c2548;
+  --at-panel-hover: #123058;
+  --at-border: rgba(148, 163, 184, 0.18);
+  --at-text: #f8fafc;
+  --at-text-muted: #b7c6da;
+  --at-text-subtle: #7d91aa;
+  --font-english: Inter, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-arabic: Cairo, Tahoma, Arial, sans-serif;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --at-canvas: #f4f8fc;
+  --at-panel: #ffffff;
+  --at-panel-hover: #eef6fc;
+  --at-border: rgba(7, 26, 53, 0.12);
+  --at-text: #071a35;
+  --at-text-muted: #48617d;
+  --at-text-subtle: #70839a;
+}
+
+@layer base {
+  html {
+    background: var(--at-canvas);
+  }
+  body {
+    margin: 0;
+    min-width: 320px;
+    background: var(--at-canvas);
+    color: var(--at-text);
+    font-family: var(--font-english);
+  }
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+  }
+  :focus-visible {
+    outline: 2px solid #0ea5e9;
+    outline-offset: 3px;
+  }
+  [dir="rtl"] {
+    font-family: var(--font-arabic);
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-english);
+  }
+  [dir="rtl"] h1,
+  [dir="rtl"] h2,
+  [dir="rtl"] h3,
+  [dir="rtl"] h4 {
+    font-family: var(--font-arabic);
+  }
+}
+
+@utility font-arabic {
+  font-family: var(--font-arabic);
+}
+@utility font-english {
+  font-family: var(--font-english);
+}
