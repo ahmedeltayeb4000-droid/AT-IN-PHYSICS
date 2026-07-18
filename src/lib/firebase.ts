@@ -1,16 +1,15 @@
-import { getApp, getApps, initializeApp } from "firebase/app";
+import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: "AIzaSyA30E9clxpZoxxdQ0yVWszEZy8B36_Qw-E",
+  authDomain: "at-in-physics.firebaseapp.com",
+  projectId: "at-in-physics",
+  storageBucket: "at-in-physics.firebasestorage.app",
+  messagingSenderId: "442151522952",
+  appId: "1:442151522952:web:a467bb5b5cdf8fac88453d",
+  measurementId: "G-LMDDSS3BR2"
 };
 
-export const firebaseApp = getApps().length
-  ? getApp()
-  : initializeApp(firebaseConfig);
-export const firebaseAuth = getAuth(firebaseApp);
+const app = initializeApp(firebaseConfig);
+export const firebaseAuth = getAuth(app);
