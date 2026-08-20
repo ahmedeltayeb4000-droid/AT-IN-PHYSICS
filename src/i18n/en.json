@@ -1,0 +1,17 @@
+{
+  "navbar": { "home": "Home", "signIn": "Sign In" },
+  "hero": { "title": "A.T IN PHYSICS", "subtitle": "Mastering the laws of the universe with ease." },
+  "stats": { "students": "Students", "courses": "Courses", "lessons": "Lessons", "certificates": "Certificates" },
+  "courses": {
+    "title": "Our Courses",
+    "button": "View Course",
+    "list": [
+      { "title": "Mechanics", "desc": "Basic laws of motion." },
+      { "title": "Thermodynamics", "desc": "Heat and energy." },
+      { "title": "Quantum Physics", "desc": "The study of particles." }
+    ]
+  },
+  "features": { "title": "Why Choose Us?", "items": ["Certified Content", "Interactive Lessons", "Expert Support"] },
+  "faq": { "title": "Common Questions", "items": [{ "q": "How to register?", "a": "Click on Sign In." }] },
+  "footer": { "rights": "All rights reserved", "contact": "Contact Us" }
+}

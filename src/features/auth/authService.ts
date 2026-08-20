@@ -25,6 +25,8 @@ const messages: Record<string, string> = {
   "auth/too-many-requests": "Too many attempts. Please try again later.",
   "auth/popup-closed-by-user": "Google sign-in was cancelled.",
   "auth/invalid-verification-code": "The verification code is invalid.",
+  "auth/invalid-action-code": "This password reset link is invalid.",
+  "auth/expired-action-code": "This password reset link has expired.",
 };
 export function getAuthError(error: unknown) {
   const code =

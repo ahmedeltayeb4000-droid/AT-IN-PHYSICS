@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
@@ -10,7 +10,15 @@ import {
 import {
   applyPasswordReset,
   getAuthError,
+  validatePasswordResetCode,
 } from "../../features/auth/authService";
+import { passwordError } from "../../features/auth/validation";
+
+type CodeValidation = {
+  code: string;
+  status: "valid" | "invalid";
+  message?: string;
+};
 
 export function ResetPasswordPage() {
   const [params] = useSearchParams();
@@ -20,13 +28,41 @@ export function ResetPasswordPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [codeValidation, setCodeValidation] = useState<CodeValidation | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (!code) return;
+
+    let cancelled = false;
+
+    validatePasswordResetCode(code)
+      .then(() => {
+        if (!cancelled) setCodeValidation({ code, status: "valid" });
+      })
+      .catch((validationError: unknown) => {
+        if (!cancelled) {
+          setCodeValidation({
+            code,
+            status: "invalid",
+            message: getAuthError(validationError),
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
-    if (!code)
+    if (!code || codeValidation?.code !== code || codeValidation.status !== "valid")
       return setError("This password reset link is invalid or incomplete.");
-    if (password.length < 6)
-      return setError("Use a password of at least 6 characters.");
+    const nextPasswordError = passwordError(password);
+    if (nextPasswordError) return setError(nextPasswordError);
     if (password !== confirmPassword)
       return setError("Passwords do not match.");
     setIsLoading(true);
@@ -44,32 +80,56 @@ export function ResetPasswordPage() {
       title="Choose a new password"
       description="Use a strong password you do not use elsewhere."
     >
-      <form className="mt-7 space-y-4" onSubmit={submit}>
-        <PasswordInput
-          label="New password"
-          value={password}
-          onChange={setPassword}
-          autoComplete="new-password"
-        />
-        <PasswordInput
-          label="Confirm new password"
-          value={confirmPassword}
-          onChange={setConfirmPassword}
-          autoComplete="new-password"
-        />
-        <Button className="w-full" type="submit" isLoading={isLoading}>
-          Save new password
-        </Button>
-      </form>
-      {error && <AuthAlert>{error}</AuthAlert>}
+      {!code && (
+        <AuthAlert>This password reset link is invalid or incomplete.</AuthAlert>
+      )}
+      {code && codeValidation?.code !== code && (
+        <p className="mt-7 text-sm text-text-muted" role="status">
+          Checking your password reset link...
+        </p>
+      )}
+      {codeValidation?.code === code && codeValidation.status === "invalid" && (
+        <AuthAlert>
+          {codeValidation.message || "This password reset link is invalid or expired."}
+        </AuthAlert>
+      )}
+      {codeValidation?.code === code && codeValidation.status === "valid" && !success && (
+        <>
+          <form className="mt-7 space-y-4" onSubmit={submit}>
+            <PasswordInput
+              label="New password"
+              value={password}
+              onChange={setPassword}
+              autoComplete="new-password"
+            />
+            <PasswordInput
+              label="Confirm new password"
+              value={confirmPassword}
+              onChange={setConfirmPassword}
+              autoComplete="new-password"
+            />
+            <p className="text-xs leading-5 text-text-subtle">
+              Use 10+ characters with at least three of: uppercase, lowercase,
+              number, symbol.
+            </p>
+            <Button className="w-full" type="submit" isLoading={isLoading}>
+              Save new password
+            </Button>
+          </form>
+          {error && <AuthAlert>{error}</AuthAlert>}
+        </>
+      )}
       {success && (
         <AuthAlert tone="success">
           Your password has been reset. You can now log in.
         </AuthAlert>
       )}
       <p className="mt-6 text-center text-sm text-text-muted">
-        <Link className="font-semibold text-accent" to="/login">
-          Back to login
+        <Link
+          className="font-semibold text-accent"
+          to={success ? "/login" : "/forgot-password"}
+        >
+          {success ? "Back to login" : "Request a new reset link"}
         </Link>
       </p>
     </AuthFrame>

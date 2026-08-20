@@ -1,20 +1,32 @@
-import type { PropsWithChildren } from "react";
+import type { ReactElement } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { useAuth } from "./AuthProvider";
-import { LoadingScreen } from "../../components/ui/LoadingScreen";
+import { useAuth } from "./AuthContext";
 
-export function ProtectedRoute({ children }: PropsWithChildren) {
-  const { user, isLoading } = useAuth();
+export function AuthGuard({ children }: { children: ReactElement }) {
+  const { user, loading } = useAuth();
   const location = useLocation();
-  if (isLoading) return <LoadingScreen label="Checking your session…" />;
-  return user ? (
-    children
-  ) : (
-    <Navigate to="/login" replace state={{ from: location }} />
-  );
+
+  if (loading) {
+    return null;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  return children;
 }
-export function PublicOnlyRoute({ children }: PropsWithChildren) {
-  const { user, isLoading } = useAuth();
-  if (isLoading) return <LoadingScreen label="Checking your session…" />;
-  return user ? <Navigate to="/" replace /> : children;
+
+export function PublicOnlyRoute({ children }: { children: ReactElement }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return null;
+  }
+
+  if (user) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return children;
 }

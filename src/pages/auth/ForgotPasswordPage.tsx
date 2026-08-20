@@ -18,19 +18,16 @@ export function ForgotPasswordPage() {
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
+    setSent(false);
     if (!isValidEmail(email))
       return setError("Enter a valid email address.");
     setIsLoading(true);
     try {
       await requestPasswordReset(email);
-    } catch (nextError) {
-      if (getAuthError(nextError) === "Too many attempts. Please try again later.") {
-        setError(getAuthError(nextError));
-        setIsLoading(false);
-        return;
-      }
-    } finally {
       setSent(true);
+    } catch (nextError) {
+      setError(getAuthError(nextError));
+    } finally {
       setIsLoading(false);
     }
   }

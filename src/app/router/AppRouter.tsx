@@ -1,26 +1,27 @@
+import { Navigate, Routes, Route } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
-import { Route, Routes, useLocation } from "react-router-dom";
-import { AppLayout } from "../../components/layout/AppLayout";
+import { AppLayout } from "../AppLayout";
 import { HomePage } from "../../pages/home/HomePage";
+import { CourseDetailPage } from "../../pages/courses/CourseDetailPage";
 import { LoginPage } from "../../pages/auth/LoginPage";
 import { RegisterPage } from "../../pages/auth/RegisterPage";
 import { ForgotPasswordPage } from "../../pages/auth/ForgotPasswordPage";
 import { ResetPasswordPage } from "../../pages/auth/ResetPasswordPage";
-import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
+import { DashboardPage } from "../../pages/dashboard/DashboardPage";
 import { SplashScreen } from "../../pages/splash/SplashScreen";
-import { PublicOnlyRoute } from "../../features/auth/AuthGuards";
+import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
+import { AuthGuard, PublicOnlyRoute } from "../../features/auth/AuthGuards";
 
 export function AppRouter() {
-  const location = useLocation();
-
   return (
     <AnimatePresence mode="wait">
-      <Routes location={location} key={location.pathname}>
-        <Route path="/splash" element={<SplashScreen />} />
-        <Route element={<AppLayout />}>
-          <Route path="/" element={<HomePage />} />
+      <Routes>
+        <Route path="/" element={<AppLayout />}>
+          <Route index element={<HomePage />} />
+          <Route path="courses/:slug" element={<CourseDetailPage />} />
+          <Route path="auth" element={<Navigate to="/login" replace />} />
           <Route
-            path="/login"
+            path="login"
             element={
               <PublicOnlyRoute>
                 <LoginPage />
@@ -28,7 +29,7 @@ export function AppRouter() {
             }
           />
           <Route
-            path="/register"
+            path="register"
             element={
               <PublicOnlyRoute>
                 <RegisterPage />
@@ -36,7 +37,7 @@ export function AppRouter() {
             }
           />
           <Route
-            path="/forgot-password"
+            path="forgot-password"
             element={
               <PublicOnlyRoute>
                 <ForgotPasswordPage />
@@ -44,15 +45,24 @@ export function AppRouter() {
             }
           />
           <Route
-            path="/reset-password"
+            path="reset-password"
             element={
               <PublicOnlyRoute>
                 <ResetPasswordPage />
               </PublicOnlyRoute>
             }
           />
-          <Route path="*" element={<NotFoundPage />} />
+          <Route
+            path="dashboard"
+            element={
+              <AuthGuard>
+                <DashboardPage />
+              </AuthGuard>
+            }
+          />
         </Route>
+        <Route path="/splash" element={<SplashScreen />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </AnimatePresence>
   );
