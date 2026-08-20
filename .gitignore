@@ -25,3 +25,9 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Privileged Firebase credentials must never be committed
+service-account*.json
+*service-account*.json
+firebase-admin*.json
+*private-key*.json
