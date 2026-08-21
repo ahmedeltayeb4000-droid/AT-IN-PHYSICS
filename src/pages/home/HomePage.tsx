@@ -1,14 +1,23 @@
 import { useTranslation } from "react-i18next";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { PageContainer, Section } from "../../components/layout/Primitives";
 import { PageTransition } from "../../components/ui/PageTransition";
 import { Badge } from "../../components/ui/Badge";
 import { GlassCard } from "../../components/ui/Card";
 import { PhysicsBackground } from "../../components/brand/PhysicsBackground";
-import { courseCatalog } from "../../features/courses/courseCatalog";
+import { getCourses } from "../../features/courses/courseRepository";
 
 export function HomePage() {
   const { t } = useTranslation();
+  const {
+    data: courses,
+    isPending: coursesPending,
+    isError: coursesError,
+  } = useQuery({
+    queryKey: ["courses", "published"],
+    queryFn: getCourses,
+  });
   const features = (t('features.items', { returnObjects: true }) as string[]) || [];
   const faqs = (t('faq.items', { returnObjects: true }) as { q: string, a: string }[]) || [];
 
@@ -44,23 +53,37 @@ export function HomePage() {
       <Section className="py-16">
         <PageContainer>
           <h2 className="mb-12 text-center text-4xl font-bold text-text">{t('courses.title')}</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {courseCatalog.map((course) => (
-              <GlassCard key={course.id} className="p-6 flex flex-col">
-                <div className="h-40 bg-accent/10 rounded-lg mb-4 flex items-center justify-center text-accent font-bold">
-                  {course.title}
-                </div>
-                <h3 className="text-xl font-bold text-text mb-2">{course.title}</h3>
-                <p className="text-text-muted text-sm mb-4">{course.shortDescription}</p>
-                <Link
-                  to={`/courses/${course.slug}`}
-                  className="mt-auto w-full py-2 bg-accent text-white rounded-lg font-bold text-center"
-                >
-                  View Course
-                </Link>
-              </GlassCard>
-            ))}
-          </div>
+          {coursesPending ? (
+            <div className="grid min-h-40 place-items-center text-sm text-text-muted" role="status">
+              Loading courses...
+            </div>
+          ) : coursesError ? (
+            <div className="grid min-h-40 place-items-center text-sm text-danger" role="alert">
+              Unable to load courses right now. Please try again later.
+            </div>
+          ) : courses.length === 0 ? (
+            <div className="grid min-h-40 place-items-center text-sm text-text-muted">
+              No courses are available right now.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {courses.map((course) => (
+                <GlassCard key={course.id} className="p-6 flex flex-col">
+                  <div className="h-40 bg-accent/10 rounded-lg mb-4 flex items-center justify-center text-accent font-bold">
+                    {course.title}
+                  </div>
+                  <h3 className="text-xl font-bold text-text mb-2">{course.title}</h3>
+                  <p className="text-text-muted text-sm mb-4">{course.shortDescription}</p>
+                  <Link
+                    to={`/courses/${course.slug}`}
+                    className="mt-auto w-full py-2 bg-accent text-white rounded-lg font-bold text-center"
+                  >
+                    View Course
+                  </Link>
+                </GlassCard>
+              ))}
+            </div>
+          )}
         </PageContainer>
       </Section>
 
