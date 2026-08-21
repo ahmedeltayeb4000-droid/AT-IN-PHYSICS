@@ -10,7 +10,10 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "preview": "vite preview",
-    "firestore:seed": "node scripts/firestore/seed-content.mjs"
+    "firestore:seed": "node scripts/firestore/seed-content.mjs",
+    "backend:build": "npm --prefix functions run build",
+    "backend:test": "npm --prefix functions test",
+    "emulators": "firebase emulators:start --project demo-at-in-physics --only auth,firestore,functions"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.101.2",
