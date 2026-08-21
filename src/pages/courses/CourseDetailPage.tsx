@@ -1,12 +1,60 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { PageContainer, Section } from "../../components/layout/Primitives";
 import { GlassCard } from "../../components/ui/Card";
 import { PageTransition } from "../../components/ui/PageTransition";
-import { courseCatalog } from "../../features/courses/courseCatalog";
+import { getCourseBySlug } from "../../features/courses/courseRepository";
 
 export function CourseDetailPage() {
   const { slug } = useParams<{ slug: string }>();
-  const course = courseCatalog.find((item) => item.slug === slug);
+  const {
+    data: course,
+    isPending,
+    isError,
+  } = useQuery({
+    queryKey: ["courses", "published", "slug", slug],
+    queryFn: () => getCourseBySlug(slug!),
+    enabled: Boolean(slug),
+  });
+
+  if (slug && isPending) {
+    return (
+      <PageTransition>
+        <Section>
+          <PageContainer>
+            <div className="grid min-h-64 place-items-center text-sm text-text-muted" role="status">
+              Loading course...
+            </div>
+          </PageContainer>
+        </Section>
+      </PageTransition>
+    );
+  }
+
+  if (slug && isError) {
+    return (
+      <PageTransition>
+        <Section>
+          <PageContainer>
+            <GlassCard className="mx-auto max-w-2xl p-8 text-center sm:p-10">
+              <h1 className="text-3xl font-bold text-text">
+                Unable to load this course.
+              </h1>
+              <p className="mt-3 text-text-muted">
+                Please try again later.
+              </p>
+              <Link
+                to="/"
+                className="mt-7 inline-flex rounded-lg bg-accent px-5 py-3 font-semibold text-white"
+              >
+                Back to course catalog
+              </Link>
+            </GlassCard>
+          </PageContainer>
+        </Section>
+      </PageTransition>
+    );
+  }
 
   if (!course) {
     return (

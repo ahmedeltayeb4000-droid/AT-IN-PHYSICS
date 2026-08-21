@@ -4,6 +4,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   orderBy,
   query,
   where,
@@ -70,6 +71,18 @@ export async function getCourseById(
 ): Promise<Course | null> {
   const snapshot = await getDoc(doc(firebaseDb, "courses", courseId));
   return snapshot.exists() ? toCourse(snapshot) : null;
+}
+
+export async function getCourseBySlug(slug: string): Promise<Course | null> {
+  const courseQuery = query(
+    collection(firebaseDb, "courses"),
+    where("slug", "==", slug),
+    where("status", "==", "published"),
+    limit(1),
+  );
+  const snapshot = await getDocs(courseQuery);
+  const course = snapshot.docs[0];
+  return course ? toCourse(course) : null;
 }
 
 export async function getCourseModules(courseId: string): Promise<Module[]> {
