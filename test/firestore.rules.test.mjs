@@ -556,6 +556,189 @@ test("active Enrollment allows exact-Course Module list query", async () => {
   assert.equal(snapshot.size, 2);
 });
 
+test("enrolled student discovers visible Session IDs and directly reads them", async () => {
+  const discoveryPath =
+    "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({
+    [discoveryPath]: { sessionIds: ["released", "unscheduled"] },
+    "courses/mechanics/modules/motion/sessions/released": {
+      title: "Released",
+      order: 1,
+      publicationStatus: "published",
+      releaseAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")),
+    },
+    "courses/mechanics/modules/motion/sessions/unscheduled": {
+      title: "Unscheduled",
+      order: 2,
+      publicationStatus: "published",
+    },
+    "courses/mechanics/modules/motion/sessions/draft": {
+      title: "Draft",
+      order: 3,
+      publicationStatus: "draft",
+    },
+    "courses/mechanics/modules/motion/sessions/future": {
+      title: "Future",
+      order: 4,
+      publicationStatus: "published",
+      releaseAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")),
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+
+  const db = authenticatedDb(CURRENT_UID);
+  const discovery = await assertSucceeds(getDoc(doc(db, discoveryPath)));
+  assert.deepEqual(discovery.data().sessionIds, ["released", "unscheduled"]);
+  for (const sessionId of discovery.data().sessionIds) {
+    await assertSucceeds(
+      getDoc(
+        doc(db, `courses/mechanics/modules/motion/sessions/${sessionId}`),
+      ),
+    );
+  }
+  await assertFails(
+    getDoc(doc(db, "courses/mechanics/modules/motion/sessions/draft")),
+  );
+  await assertFails(
+    getDoc(doc(db, "courses/mechanics/modules/motion/sessions/future")),
+  );
+});
+
+test("unauthenticated user cannot read Session discovery", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({ [path]: { sessionIds: ["unscheduled"] } });
+  await assertFails(getDoc(doc(unauthenticatedDb(), path)));
+});
+
+test("missing Enrollment denies Session discovery", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({ [path]: { sessionIds: ["unscheduled"] } });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("revoked Enrollment denies Session discovery", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({
+    [path]: { sessionIds: ["unscheduled"] },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { status: "revoked" },
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("expired Enrollment denies Session discovery", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({
+    [path]: { sessionIds: ["unscheduled"] },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { expiresAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")) },
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("another-Course Enrollment denies Session discovery", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({
+    [path]: { sessionIds: ["unscheduled"] },
+    [`enrollments/${CURRENT_UID}_thermodynamics`]: enrollment(
+      CURRENT_UID,
+      "thermodynamics",
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("malformed Session discovery documents fail closed", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({
+    [path]: { sessionIds: "not-a-list" },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+
+  await seedDocuments({
+    [path]: { sessionIds: ["unscheduled"], forged: true },
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("Session discovery with an empty ID fails closed in Rules", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({
+    [path]: { sessionIds: [""] },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("Session discovery with a slash-containing ID fails closed in Rules", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({
+    [path]: { sessionIds: ["nested/session"] },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("Session discovery with duplicate IDs fails closed in Rules", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({
+    [path]: { sessionIds: ["duplicate", "duplicate"] },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("Session discovery collection list is denied", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({
+    [path]: { sessionIds: ["unscheduled"] },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDocs(
+      collection(
+        authenticatedDb(CURRENT_UID),
+        "courses/mechanics/modules/motion/sessionDiscovery",
+      ),
+    ),
+  );
+});
+
+test("authenticated student cannot create Session discovery", async () => {
+  await assertFails(
+    setDoc(
+      doc(
+        authenticatedDb(CURRENT_UID),
+        "courses/mechanics/modules/motion/sessionDiscovery/visible",
+      ),
+      { sessionIds: ["forged"] },
+    ),
+  );
+});
+
+test("authenticated student cannot update Session discovery", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({ [path]: { sessionIds: ["unscheduled"] } });
+  await assertFails(
+    updateDoc(doc(authenticatedDb(CURRENT_UID), path), {
+      sessionIds: ["forged"],
+    }),
+  );
+});
+
+test("authenticated student cannot delete Session discovery", async () => {
+  const path = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({ [path]: { sessionIds: ["unscheduled"] } });
+  await assertFails(deleteDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
 test("unconstrained exact-Course Session list query is denied", async () => {
   await seedDocuments({
     "courses/mechanics/modules/motion/sessions/introduction": {

@@ -42,11 +42,28 @@ service cloud.firestore {
         );
     }
 
+    function isSessionDiscoveryManifest() {
+      return resource.data.keys().hasAll(["sessionIds"])
+        && resource.data.keys().hasOnly(["sessionIds"])
+        && resource.data.sessionIds is list
+        // Rules cannot iterate an arbitrary list; remaining ID shape is validated by trusted code.
+        && !resource.data.sessionIds.hasAny([""])
+        && resource.data.sessionIds.join("").matches("^[^/]*$")
+        && resource.data.sessionIds.size()
+          == resource.data.sessionIds.toSet().size();
+    }
+
     match /courses/{courseId} {
       allow read: if resource.data.status == "published";
 
       match /modules/{moduleId} {
         allow read: if canReadCourseContent(courseId);
+
+        match /sessionDiscovery/{discoveryId} {
+          allow get: if discoveryId == "visible"
+            && canReadCourseContent(courseId)
+            && isSessionDiscoveryManifest();
+        }
 
         match /sessions/{sessionId} {
           allow get: if canReadCourseContent(courseId)

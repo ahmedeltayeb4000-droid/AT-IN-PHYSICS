@@ -8,9 +8,14 @@ import {
   orderBy,
   query,
   where,
+  type DocumentSnapshot,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { firebaseDb } from "../../lib/firebase";
+import {
+  SESSION_DISCOVERY_DOCUMENT_ID,
+  mapSessionDiscoveryManifest,
+} from "./sessionDiscovery";
 import type { Course, Module, Session } from "./types";
 
 type CourseDocument = Omit<Course, "id">;
@@ -36,7 +41,7 @@ function toModule(
 }
 
 function toSession(
-  snapshot: QueryDocumentSnapshot,
+  snapshot: DocumentSnapshot,
   courseId: string,
   moduleId: string,
 ): Session {
@@ -98,17 +103,59 @@ export async function getModuleSessions(
   courseId: string,
   moduleId: string,
 ): Promise<Session[]> {
-  const sessionsQuery = query(
-    collection(
+  const sessionIds = await getModuleSessionIds(courseId, moduleId);
+  const sessions = await Promise.all(
+    sessionIds.map((sessionId) =>
+      getSessionById(courseId, moduleId, sessionId),
+    ),
+  );
+
+  if (sessions.some((session) => session === null)) {
+    throw new Error("Session discovery references an unavailable Session.");
+  }
+
+  return sessions as Session[];
+}
+
+export async function getModuleSessionIds(
+  courseId: string,
+  moduleId: string,
+): Promise<string[]> {
+  const snapshot = await getDoc(
+    doc(
+      firebaseDb,
+      "courses",
+      courseId,
+      "modules",
+      moduleId,
+      "sessionDiscovery",
+      SESSION_DISCOVERY_DOCUMENT_ID,
+    ),
+  );
+  if (!snapshot.exists()) {
+    throw new Error("Session discovery manifest is unavailable.");
+  }
+
+  return [...mapSessionDiscoveryManifest(snapshot.data()).sessionIds];
+}
+
+export async function getSessionById(
+  courseId: string,
+  moduleId: string,
+  sessionId: string,
+): Promise<Session | null> {
+  const snapshot = await getDoc(
+    doc(
       firebaseDb,
       "courses",
       courseId,
       "modules",
       moduleId,
       "sessions",
+      sessionId,
     ),
-    orderBy("order", "asc"),
   );
-  const snapshot = await getDocs(sessionsQuery);
-  return snapshot.docs.map((item) => toSession(item, courseId, moduleId));
+  return snapshot.exists()
+    ? toSession(snapshot, courseId, moduleId)
+    : null;
 }

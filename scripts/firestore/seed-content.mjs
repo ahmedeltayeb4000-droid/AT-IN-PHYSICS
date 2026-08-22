@@ -7,6 +7,10 @@ import {
   curriculumModules,
   curriculumSessions,
 } from "../../src/features/courses/curriculumCatalog.ts";
+import {
+  SESSION_DISCOVERY_DOCUMENT_ID,
+  buildSessionDiscoveryManifest,
+} from "../../src/features/courses/sessionDiscovery.ts";
 
 const EXPECTED_PROJECT_ID = "at-in-physics";
 const DATABASE_ID = "(default)";
@@ -91,6 +95,19 @@ function buildSeedPlan() {
     add(
       `courses/${session.courseId}/modules/${session.moduleId}/sessions/${session.id}`,
       data,
+    );
+  }
+
+  const discoveryTime = new Date();
+  for (const module of curriculumModules) {
+    add(
+      `courses/${module.courseId}/modules/${module.id}/sessionDiscovery/${SESSION_DISCOVERY_DOCUMENT_ID}`,
+      buildSessionDiscoveryManifest(
+        curriculumSessions,
+        module.courseId,
+        module.id,
+        discoveryTime,
+      ),
     );
   }
 
