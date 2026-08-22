@@ -19,7 +19,7 @@ export type SessionDiscoveryRefreshResult = {
   readonly writeNecessary: boolean;
 };
 
-function toTrustedSessionRecord(
+export function trustedSessionRecordFromSnapshot(
   snapshot: QueryDocumentSnapshot<DocumentData>,
 ): TrustedSessionRecord {
   const data = snapshot.data();
@@ -67,7 +67,7 @@ export async function refreshSessionDiscoveryManifest(
     const sessionsSnapshot = await transaction.get(sessionsQuery);
     const manifestSnapshot = await transaction.get(manifestReference);
     const manifest = buildSessionDiscoveryManifest(
-      sessionsSnapshot.docs.map(toTrustedSessionRecord),
+      sessionsSnapshot.docs.map(trustedSessionRecordFromSnapshot),
       trustedNow,
     );
     const writeNecessary =
