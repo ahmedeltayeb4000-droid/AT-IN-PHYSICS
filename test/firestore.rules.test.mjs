@@ -9,7 +9,9 @@ import {
   initializeTestEnvironment,
 } from "@firebase/rules-unit-testing";
 import {
+  Timestamp,
   collection,
+  collectionGroup,
   deleteDoc,
   doc,
   getDoc,
@@ -41,7 +43,7 @@ function emulatorConfiguration() {
   return { host, port };
 }
 
-function enrollment(userId, courseId = "mechanics") {
+function enrollment(userId, courseId = "mechanics", overrides = {}) {
   return {
     userId,
     courseId,
@@ -50,7 +52,14 @@ function enrollment(userId, courseId = "mechanics") {
     expiresAt: null,
     source: "manual",
     grantedBy: "fixture-owner",
+    ...overrides,
   };
+}
+
+function withoutExpiresAt(userId, courseId = "mechanics") {
+  const fixture = enrollment(userId, courseId);
+  delete fixture.expiresAt;
+  return fixture;
 }
 
 async function seedDocuments(fixtures) {
@@ -218,16 +227,513 @@ test("draft Course remains publicly unreadable", async () => {
   await assertFails(getDoc(doc(unauthenticatedDb(), "courses/draft-course")));
 });
 
-test("Course Modules remain inaccessible", async () => {
+test("authenticated student without Enrollment cannot read a Module", async () => {
   const path = "courses/mechanics/modules/motion";
   await seedDocuments({ [path]: { title: "Motion", order: 1 } });
   await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
 });
 
-test("Course Sessions remain inaccessible", async () => {
+test("authenticated student without Enrollment cannot read a Session", async () => {
   const path = "courses/mechanics/modules/motion/sessions/introduction";
   await seedDocuments({
     [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
   });
   await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("unauthenticated user cannot read a Module", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(unauthenticatedDb(), path)));
+});
+
+test("active non-expiring Enrollment allows Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertSucceeds(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("active future-expiring Enrollment allows Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { expiresAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")) },
+    ),
+  });
+  await assertSucceeds(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("expired Enrollment denies Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { expiresAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")) },
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("revoked Enrollment denies Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { status: "revoked" },
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("Enrollment for another Course denies Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_thermodynamics`]: enrollment(
+      CURRENT_UID,
+      "thermodynamics",
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("another student's Enrollment denies Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${OTHER_UID}_mechanics`]: enrollment(OTHER_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("spoofed noncanonical Enrollment ID denies Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    "enrollments/spoofed-authority": enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("stored Enrollment userId mismatch denies Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(OTHER_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("stored Enrollment courseId mismatch denies Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "thermodynamics",
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("unknown Enrollment status denies Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { status: "unknown" },
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("missing Enrollment expiresAt denies Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: withoutExpiresAt(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("malformed Enrollment expiresAt denies Module read", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({
+    [path]: { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { expiresAt: "2100-01-01T00:00:00.000Z" },
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("unauthenticated user cannot read a Session", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/introduction";
+  await seedDocuments({
+    [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(unauthenticatedDb(), path)));
+});
+
+test("published unscheduled Session allows read with active Enrollment", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/introduction";
+  await seedDocuments({
+    [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertSucceeds(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("draft Session denies read with active Enrollment", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/draft";
+  await seedDocuments({
+    [path]: { title: "Draft", order: 2, publicationStatus: "draft" },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("future scheduled Session denies read with active Enrollment", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/future";
+  await seedDocuments({
+    [path]: {
+      title: "Future",
+      order: 2,
+      publicationStatus: "published",
+      releaseAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")),
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("past scheduled Session allows read with active Enrollment", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/released";
+  await seedDocuments({
+    [path]: {
+      title: "Released",
+      order: 2,
+      publicationStatus: "published",
+      releaseAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")),
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertSucceeds(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("malformed Session publicationStatus denies read", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/malformed-status";
+  await seedDocuments({
+    [path]: { title: "Malformed", order: 2, publicationStatus: "preview" },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("missing Session publicationStatus denies read", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/missing-status";
+  await seedDocuments({
+    [path]: { title: "Missing", order: 2 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("malformed Session releaseAt denies read", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/malformed-release";
+  await seedDocuments({
+    [path]: {
+      title: "Malformed",
+      order: 2,
+      publicationStatus: "published",
+      releaseAt: "2000-01-01T00:00:00.000Z",
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("null Session releaseAt denies read", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/null-release";
+  await seedDocuments({
+    [path]: {
+      title: "Null",
+      order: 2,
+      publicationStatus: "published",
+      releaseAt: null,
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("expired Enrollment denies Session read", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/introduction";
+  await seedDocuments({
+    [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { expiresAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")) },
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("revoked Enrollment denies Session read", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/introduction";
+  await seedDocuments({
+    [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { status: "revoked" },
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("Enrollment for another Course denies Session read", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/introduction";
+  await seedDocuments({
+    [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
+    [`enrollments/${CURRENT_UID}_thermodynamics`]: enrollment(
+      CURRENT_UID,
+      "thermodynamics",
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("another student's Enrollment denies Session read", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/introduction";
+  await seedDocuments({
+    [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
+    [`enrollments/${OTHER_UID}_mechanics`]: enrollment(OTHER_UID),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("stored authority mismatch denies Session read", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/introduction";
+  await seedDocuments({
+    [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "thermodynamics",
+    ),
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("active Enrollment allows exact-Course Module list query", async () => {
+  await seedDocuments({
+    "courses/mechanics/modules/motion": { title: "Motion", order: 1 },
+    "courses/mechanics/modules/forces": { title: "Forces", order: 2 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  const snapshot = await assertSucceeds(
+    getDocs(collection(authenticatedDb(CURRENT_UID), "courses/mechanics/modules")),
+  );
+  assert.equal(snapshot.size, 2);
+});
+
+test("unconstrained exact-Course Session list query is denied", async () => {
+  await seedDocuments({
+    "courses/mechanics/modules/motion/sessions/introduction": {
+      title: "Introduction",
+      order: 1,
+      publicationStatus: "published",
+    },
+    "courses/mechanics/modules/motion/sessions/displacement": {
+      title: "Displacement",
+      order: 2,
+      publicationStatus: "draft",
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDocs(
+      collection(
+        authenticatedDb(CURRENT_UID),
+        "courses/mechanics/modules/motion/sessions",
+      ),
+    ),
+  );
+});
+
+test("publication-only Session query is denied when future releases are possible", async () => {
+  const sessionsPath = "courses/mechanics/modules/motion/sessions";
+  await seedDocuments({
+    [`${sessionsPath}/released`]: {
+      title: "Released",
+      order: 1,
+      publicationStatus: "published",
+      releaseAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")),
+    },
+    [`${sessionsPath}/future`]: {
+      title: "Future",
+      order: 2,
+      publicationStatus: "published",
+      releaseAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")),
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  const publishedQuery = query(
+    collection(authenticatedDb(CURRENT_UID), sessionsPath),
+    where("publicationStatus", "==", "published"),
+  );
+  await assertFails(getDocs(publishedQuery));
+});
+
+test("elapsed release-cutoff Session query remains denied", async () => {
+  const sessionsPath = "courses/mechanics/modules/motion/sessions";
+  const elapsedCutoff = Timestamp.fromDate(
+    new Date("2001-01-01T00:00:00.000Z"),
+  );
+  await seedDocuments({
+    [`${sessionsPath}/released`]: {
+      title: "Released",
+      order: 1,
+      publicationStatus: "published",
+      releaseAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")),
+    },
+    [`${sessionsPath}/future`]: {
+      title: "Future",
+      order: 2,
+      publicationStatus: "published",
+      releaseAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")),
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  const releasedQuery = query(
+    collection(authenticatedDb(CURRENT_UID), sessionsPath),
+    where("publicationStatus", "==", "published"),
+    where("releaseAt", "<=", elapsedCutoff),
+  );
+  await assertFails(getDocs(releasedQuery));
+});
+
+test("Session query with a future release cutoff is denied", async () => {
+  const sessionsPath = "courses/mechanics/modules/motion/sessions";
+  await seedDocuments({
+    [`${sessionsPath}/future`]: {
+      title: "Future",
+      order: 1,
+      publicationStatus: "published",
+      releaseAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")),
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  const unsafeQuery = query(
+    collection(authenticatedDb(CURRENT_UID), sessionsPath),
+    where("publicationStatus", "==", "published"),
+    where(
+      "releaseAt",
+      "<=",
+      Timestamp.fromDate(new Date("2200-01-01T00:00:00.000Z")),
+    ),
+  );
+  await assertFails(getDocs(unsafeQuery));
+});
+
+test("cross-Course Module collection-group enumeration is denied", async () => {
+  await seedDocuments({
+    "courses/mechanics/modules/motion": { title: "Motion", order: 1 },
+    "courses/thermodynamics/modules/heat": { title: "Heat", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDocs(collectionGroup(authenticatedDb(CURRENT_UID), "modules")),
+  );
+});
+
+test("cross-Course Session collection-group enumeration is denied", async () => {
+  await seedDocuments({
+    "courses/mechanics/modules/motion/sessions/introduction": {
+      title: "Introduction",
+      order: 1,
+      publicationStatus: "published",
+    },
+    "courses/thermodynamics/modules/heat/sessions/introduction": {
+      title: "Introduction",
+      order: 1,
+      publicationStatus: "published",
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDocs(collectionGroup(authenticatedDb(CURRENT_UID), "sessions")),
+  );
+});
+
+test("authenticated student cannot create a Module", async () => {
+  await assertFails(
+    setDoc(doc(authenticatedDb(CURRENT_UID), "courses/mechanics/modules/new"), {
+      title: "New",
+      order: 3,
+    }),
+  );
+});
+
+test("authenticated student cannot update a Module", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({ [path]: { title: "Motion", order: 1 } });
+  await assertFails(
+    updateDoc(doc(authenticatedDb(CURRENT_UID), path), { title: "Changed" }),
+  );
+});
+
+test("authenticated student cannot delete a Module", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({ [path]: { title: "Motion", order: 1 } });
+  await assertFails(deleteDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("authenticated student cannot create a Session", async () => {
+  await assertFails(
+    setDoc(
+      doc(
+        authenticatedDb(CURRENT_UID),
+        "courses/mechanics/modules/motion/sessions/new",
+      ),
+      { title: "New", order: 3, publicationStatus: "draft" },
+    ),
+  );
+});
+
+test("authenticated student cannot update a Session", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/introduction";
+  await seedDocuments({
+    [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
+  });
+  await assertFails(
+    updateDoc(doc(authenticatedDb(CURRENT_UID), path), { title: "Changed" }),
+  );
+});
+
+test("authenticated student cannot delete a Session", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/introduction";
+  await seedDocuments({
+    [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
+  });
+  await assertFails(deleteDoc(doc(authenticatedDb(CURRENT_UID), path)));
 });

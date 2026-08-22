@@ -2,8 +2,57 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function hasActiveEnrollment(courseId) {
+      let userId = request.auth.uid;
+      let enrollmentPath = /databases/$(database)/documents/enrollments/$(userId + "_" + courseId);
+      let enrollment = get(enrollmentPath).data;
+
+      return exists(enrollmentPath)
+        && enrollment.keys().hasAll([
+          "userId",
+          "courseId",
+          "status",
+          "expiresAt"
+        ])
+        && enrollment.userId == userId
+        && enrollment.courseId == courseId
+        && enrollment.status == "active"
+        && (
+          enrollment.expiresAt == null
+          || (
+            enrollment.expiresAt is timestamp
+            && enrollment.expiresAt > request.time
+          )
+        );
+    }
+
+    function canReadCourseContent(courseId) {
+      return request.auth != null && hasActiveEnrollment(courseId);
+    }
+
+    function isSessionVisible() {
+      return resource.data.keys().hasAll(["publicationStatus"])
+        && resource.data.publicationStatus == "published"
+        && (
+          !resource.data.keys().hasAny(["releaseAt"])
+          || (
+            resource.data.releaseAt is timestamp
+            && resource.data.releaseAt <= request.time
+          )
+        );
+    }
+
     match /courses/{courseId} {
       allow read: if resource.data.status == "published";
+
+      match /modules/{moduleId} {
+        allow read: if canReadCourseContent(courseId);
+
+        match /sessions/{sessionId} {
+          allow get: if canReadCourseContent(courseId)
+            && isSessionVisible();
+        }
+      }
     }
 
     match /enrollments/{enrollmentId} {
