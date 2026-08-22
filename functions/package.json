@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test lib/test/smoke.test.js lib/test/ownerBootstrap.test.js",
+    "test": "npm run build && node --test lib/test/smoke.test.js lib/test/ownerBootstrap.test.js lib/test/enrollmentValidation.test.js",
     "owner:bootstrap": "npm run build && node lib/src/tooling/bootstrapOwnerCli.js"
   },
   "dependencies": {
