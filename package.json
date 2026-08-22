@@ -13,6 +13,7 @@
     "firestore:seed": "node scripts/firestore/seed-content.mjs",
     "backend:build": "npm --prefix functions run build",
     "backend:test": "npm --prefix functions test",
+    "owner:bootstrap": "npm --prefix functions run owner:bootstrap --",
     "emulators": "firebase emulators:start --project demo-at-in-physics --only auth,firestore,functions"
   },
   "dependencies": {
