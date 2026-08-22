@@ -6,6 +6,12 @@ service cloud.firestore {
       allow read: if resource.data.status == "published";
     }
 
+    match /enrollments/{enrollmentId} {
+      allow read: if request.auth != null
+        && resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
