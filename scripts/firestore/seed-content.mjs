@@ -9,8 +9,8 @@ import {
 } from "../../src/features/courses/curriculumCatalog.ts";
 import {
   SESSION_DISCOVERY_DOCUMENT_ID,
-  buildSessionDiscoveryManifest,
 } from "../../src/features/courses/sessionDiscovery.ts";
+import { buildSessionDiscoveryManifest } from "../../functions/src/sessionDiscovery/manifest.ts";
 
 const EXPECTED_PROJECT_ID = "at-in-physics";
 const DATABASE_ID = "(default)";
@@ -99,13 +99,25 @@ function buildSeedPlan() {
   }
 
   const discoveryTime = new Date();
+  const trustedSessions = curriculumSessions.map((session) => ({
+    id: session.id,
+    courseId: session.courseId,
+    moduleId: session.moduleId,
+    order: session.order,
+    publicationStatus: session.publicationStatus,
+    ...(session.releaseAt
+      ? { releaseAt: new Date(session.releaseAt) }
+      : {}),
+  }));
   for (const module of curriculumModules) {
     add(
       `courses/${module.courseId}/modules/${module.id}/sessionDiscovery/${SESSION_DISCOVERY_DOCUMENT_ID}`,
       buildSessionDiscoveryManifest(
-        curriculumSessions,
-        module.courseId,
-        module.id,
+        trustedSessions.filter(
+          (session) =>
+            session.courseId === module.courseId &&
+            session.moduleId === module.id,
+        ),
         discoveryTime,
       ),
     );

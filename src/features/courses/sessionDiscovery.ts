@@ -1,49 +1,8 @@
-import type { Session } from "./types";
-
 export const SESSION_DISCOVERY_DOCUMENT_ID = "visible";
 
 export type SessionDiscoveryManifest = {
   readonly sessionIds: readonly string[];
 };
-
-export function sessionIsStudentVisible(session: Session, now: Date): boolean {
-  if (
-    session.publicationStatus !== "published" ||
-    Number.isNaN(now.getTime())
-  ) {
-    return false;
-  }
-  if (session.releaseAt === undefined) return true;
-
-  const releaseAt = Date.parse(session.releaseAt);
-  return !Number.isNaN(releaseAt) && releaseAt <= now.getTime();
-}
-
-export function buildSessionDiscoveryManifest(
-  sessions: readonly Session[],
-  courseId: string,
-  moduleId: string,
-  now: Date,
-): SessionDiscoveryManifest {
-  const visibleSessions = sessions
-    .filter(
-      (session) =>
-        session.courseId === courseId &&
-        session.moduleId === moduleId &&
-        sessionIsStudentVisible(session, now),
-    )
-    .sort((left, right) => {
-      const order = left.order - right.order;
-      return order || left.id.localeCompare(right.id, "en");
-    });
-  const sessionIds = visibleSessions.map((session) => session.id);
-
-  if (new Set(sessionIds).size !== sessionIds.length) {
-    throw new Error("Session discovery contains duplicate Session IDs.");
-  }
-
-  return { sessionIds };
-}
 
 export function mapSessionDiscoveryManifest(
   value: unknown,

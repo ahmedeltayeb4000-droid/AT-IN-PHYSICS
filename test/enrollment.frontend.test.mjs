@@ -7,11 +7,7 @@ import {
   hasCourseEntitlement,
 } from "../src/features/enrollments/entitlement.ts";
 import { buildDashboardEnrollmentRows } from "../src/features/enrollments/dashboardEnrollmentViewModel.ts";
-import {
-  buildSessionDiscoveryManifest,
-  mapSessionDiscoveryManifest,
-  sessionIsStudentVisible,
-} from "../src/features/courses/sessionDiscovery.ts";
+import { mapSessionDiscoveryManifest } from "../src/features/courses/sessionDiscovery.ts";
 
 const NOW = new Date("2030-01-01T00:00:00.000Z");
 
@@ -49,18 +45,6 @@ function course(overrides = {}) {
     title: "Mechanics",
     shortDescription: "Motion, forces, and energy.",
     status: "published",
-    ...overrides,
-  };
-}
-
-function session(overrides = {}) {
-  return {
-    id: "mechanics-intro-motion",
-    courseId: "mechanics",
-    moduleId: "mechanics-motion-basics",
-    title: "Introduction to Motion",
-    order: 1,
-    publicationStatus: "published",
     ...overrides,
   };
 }
@@ -258,56 +242,6 @@ test("Dashboard does not use draft Course metadata", () => {
   );
   assert.equal(row.state, "course-unavailable");
   assert.equal(row.course, null);
-});
-
-test("Session discovery includes only published Sessions already visible at now", () => {
-  const manifest = buildSessionDiscoveryManifest(
-    [
-      session({ id: "unscheduled", order: 2 }),
-      session({
-        id: "released",
-        order: 1,
-        releaseAt: "2029-01-01T00:00:00.000Z",
-      }),
-      session({ id: "draft", order: 3, publicationStatus: "draft" }),
-      session({
-        id: "future",
-        order: 4,
-        releaseAt: "2031-01-01T00:00:00.000Z",
-      }),
-    ],
-    "mechanics",
-    "mechanics-motion-basics",
-    NOW,
-  );
-  assert.deepEqual(manifest.sessionIds, ["released", "unscheduled"]);
-});
-
-test("Session release exactly equal to now is discoverable", () => {
-  assert.equal(
-    sessionIsStudentVisible(session({ releaseAt: NOW.toISOString() }), NOW),
-    true,
-  );
-});
-
-test("malformed Session release data fails discovery closed", () => {
-  assert.equal(
-    sessionIsStudentVisible(session({ releaseAt: "not-a-timestamp" }), NOW),
-    false,
-  );
-});
-
-test("Session discovery ignores unrelated Course and Module Sessions", () => {
-  const manifest = buildSessionDiscoveryManifest(
-    [
-      session({ courseId: "thermodynamics" }),
-      session({ moduleId: "other-module" }),
-    ],
-    "mechanics",
-    "mechanics-motion-basics",
-    NOW,
-  );
-  assert.deepEqual(manifest.sessionIds, []);
 });
 
 test("valid Session discovery manifest maps without normalization", () => {
