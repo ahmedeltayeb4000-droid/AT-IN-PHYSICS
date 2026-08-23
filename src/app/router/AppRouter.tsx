@@ -3,6 +3,7 @@ import { AnimatePresence } from "framer-motion";
 import { AppLayout } from "../AppLayout";
 import { HomePage } from "../../pages/home/HomePage";
 import { CourseDetailPage } from "../../pages/courses/CourseDetailPage";
+import { SessionDetailPage } from "../../pages/courses/SessionDetailPage";
 import { LoginPage } from "../../pages/auth/LoginPage";
 import { RegisterPage } from "../../pages/auth/RegisterPage";
 import { ForgotPasswordPage } from "../../pages/auth/ForgotPasswordPage";
@@ -19,6 +20,14 @@ export function AppRouter() {
         <Route path="/" element={<AppLayout />}>
           <Route index element={<HomePage />} />
           <Route path="courses/:slug" element={<CourseDetailPage />} />
+          <Route
+            path="courses/:slug/modules/:moduleId/sessions/:sessionId"
+            element={
+              <AuthGuard>
+                <SessionDetailPage />
+              </AuthGuard>
+            }
+          />
           <Route path="auth" element={<Navigate to="/login" replace />} />
           <Route
             path="login"

@@ -17,6 +17,11 @@ import {
   mapSessionDiscoveryManifest,
 } from "./sessionDiscovery";
 import { buildCourseCurriculum, type CourseCurriculumModule } from "./courseCurriculum";
+import {
+  composeSessionDetail,
+  SessionDetailUnavailableError,
+  type SessionDetail,
+} from "./sessionDetail";
 import type { Course, Module, Session } from "./types";
 
 type CourseDocument = Omit<Course, "id">;
@@ -40,7 +45,7 @@ function toCourse(snapshot: QueryDocumentSnapshot): Course {
 }
 
 function toModule(
-  snapshot: QueryDocumentSnapshot,
+  snapshot: DocumentSnapshot,
   courseId: string,
 ): Module {
   const data = snapshot.data() as ModuleDocument;
@@ -134,6 +139,16 @@ export async function getCourseModules(courseId: string): Promise<Module[]> {
   return snapshot.docs.map((item) => toModule(item, courseId));
 }
 
+export async function getModuleById(
+  courseId: string,
+  moduleId: string,
+): Promise<Module | null> {
+  const snapshot = await getDoc(
+    doc(firebaseDb, "courses", courseId, "modules", moduleId),
+  );
+  return snapshot.exists() ? toModule(snapshot, courseId) : null;
+}
+
 export async function getModuleSessions(
   courseId: string,
   moduleId: string,
@@ -203,4 +218,45 @@ export async function getSessionById(
   return snapshot.exists()
     ? toSession(snapshot, courseId, moduleId)
     : null;
+}
+
+export async function getSessionDetail(
+  course: Course,
+  moduleId: string,
+  sessionId: string,
+): Promise<SessionDetail> {
+  let module: Module | null;
+  try {
+    module = await getModuleById(course.id, moduleId);
+  } catch (cause) {
+    throw new SessionDetailUnavailableError("module-unavailable", { cause });
+  }
+  if (module === null) {
+    throw new SessionDetailUnavailableError("module-unavailable");
+  }
+
+  let discoveredSessionIds: string[];
+  try {
+    discoveredSessionIds = await getModuleSessionIds(course.id, module.id);
+  } catch (cause) {
+    throw new SessionDetailUnavailableError("discovery-unavailable", { cause });
+  }
+  if (!discoveredSessionIds.includes(sessionId)) {
+    throw new SessionDetailUnavailableError("session-not-discovered");
+  }
+
+  let session: Session | null;
+  try {
+    session = await getSessionById(course.id, module.id, sessionId);
+  } catch (cause) {
+    throw new SessionDetailUnavailableError("session-unavailable", { cause });
+  }
+
+  return composeSessionDetail(
+    course,
+    module,
+    discoveredSessionIds,
+    sessionId,
+    session,
+  );
 }

@@ -9,6 +9,12 @@ import {
 import { buildDashboardEnrollmentRows } from "../src/features/enrollments/dashboardEnrollmentViewModel.ts";
 import { mapSessionDiscoveryManifest } from "../src/features/courses/sessionDiscovery.ts";
 import { buildCourseCurriculum } from "../src/features/courses/courseCurriculum.ts";
+import {
+  buildSessionDetailPath,
+  composeSessionDetail,
+  parseSessionDetailRouteParams,
+  SessionDetailUnavailableError,
+} from "../src/features/courses/sessionDetail.ts";
 
 const NOW = new Date("2030-01-01T00:00:00.000Z");
 
@@ -362,5 +368,136 @@ test("unavailable entitlement does not authorize protected curriculum", () => {
       NOW,
     ),
     false,
+  );
+});
+
+test("Session detail composes verified Course, Module, and Session metadata", () => {
+  const expectedCourse = course();
+  const expectedModule = moduleRecord();
+  const expectedSession = sessionRecord();
+
+  assert.deepEqual(
+    composeSessionDetail(
+      expectedCourse,
+      expectedModule,
+      [expectedSession.id],
+      expectedSession.id,
+      expectedSession,
+    ),
+    {
+      course: expectedCourse,
+      module: expectedModule,
+      session: expectedSession,
+    },
+  );
+});
+
+test("Session detail rejects a Session absent from discovery", () => {
+  assert.throws(
+    () =>
+      composeSessionDetail(
+        course(),
+        moduleRecord(),
+        [],
+        "mechanics-intro-motion",
+        sessionRecord(),
+      ),
+    (error) =>
+      error instanceof SessionDetailUnavailableError &&
+      error.reason === "session-not-discovered",
+  );
+});
+
+test("Session detail rejects cross-Course and cross-Module composition", () => {
+  assert.throws(
+    () =>
+      composeSessionDetail(
+        course(),
+        moduleRecord({ courseId: "thermodynamics" }),
+        ["mechanics-intro-motion"],
+        "mechanics-intro-motion",
+        sessionRecord(),
+      ),
+    (error) =>
+      error instanceof SessionDetailUnavailableError &&
+      error.reason === "module-unavailable",
+  );
+  for (const mismatchedSession of [
+    sessionRecord({ courseId: "thermodynamics" }),
+    sessionRecord({ moduleId: "mechanics-forces" }),
+  ]) {
+    assert.throws(
+      () =>
+        composeSessionDetail(
+          course(),
+          moduleRecord(),
+          ["mechanics-intro-motion"],
+          "mechanics-intro-motion",
+          mismatchedSession,
+        ),
+      (error) =>
+        error instanceof SessionDetailUnavailableError &&
+        error.reason === "session-unavailable",
+    );
+  }
+});
+
+test("Session detail rejects missing or malformed Session metadata", () => {
+  for (const unavailableSession of [
+    null,
+    sessionRecord({ title: "   " }),
+    sessionRecord({ order: -1 }),
+  ]) {
+    assert.throws(
+      () =>
+        composeSessionDetail(
+          course(),
+          moduleRecord(),
+          ["mechanics-intro-motion"],
+          "mechanics-intro-motion",
+          unavailableSession,
+        ),
+      (error) =>
+        error instanceof SessionDetailUnavailableError &&
+        error.reason === "session-unavailable",
+    );
+  }
+});
+
+test("unavailable entitlement does not authorize Session detail", () => {
+  assert.equal(
+    hasCourseEntitlement(
+      [enrollment({ expiresAt: NOW.toISOString() })],
+      "mechanics",
+      NOW,
+    ),
+    false,
+  );
+});
+
+test("Session detail route parameters and navigation path are validated", () => {
+  assert.deepEqual(
+    parseSessionDetailRouteParams({
+      slug: "mechanics",
+      moduleId: "mechanics-motion-basics",
+      sessionId: "mechanics-intro-motion",
+    }),
+    {
+      slug: "mechanics",
+      moduleId: "mechanics-motion-basics",
+      sessionId: "mechanics-intro-motion",
+    },
+  );
+  assert.equal(
+    buildSessionDetailPath(
+      "mechanics",
+      "mechanics-motion-basics",
+      "mechanics-intro-motion",
+    ),
+    "/courses/mechanics/modules/mechanics-motion-basics/sessions/mechanics-intro-motion",
+  );
+  assert.equal(
+    buildSessionDetailPath("mechanics", "mechanics-motion-basics", "bad/id"),
+    null,
   );
 });

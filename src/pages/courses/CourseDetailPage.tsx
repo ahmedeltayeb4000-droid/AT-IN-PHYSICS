@@ -9,6 +9,7 @@ import {
   getCourseBySlug,
   getCourseCurriculum,
 } from "../../features/courses/courseRepository";
+import { buildSessionDetailPath } from "../../features/courses/sessionDetail";
 import { hasCourseEntitlement } from "../../features/enrollments/entitlement";
 import { useMyEnrollments } from "../../features/enrollments/useMyEnrollments";
 
@@ -196,19 +197,35 @@ export function CourseDetailPage() {
                         </p>
                       ) : (
                         <ol className="mt-4 space-y-3">
-                          {sessions.map((session, index) => (
-                            <li
-                              key={session.id}
-                              className="rounded-lg border border-white/10 px-4 py-3"
-                            >
-                              <p className="text-xs font-bold uppercase tracking-[.16em] text-accent">
-                                Session {index + 1}
-                              </p>
-                              <p className="mt-1 font-semibold text-text">
-                                {session.title}
-                              </p>
-                            </li>
-                          ))}
+                          {sessions.map((session, index) => {
+                            const sessionPath = buildSessionDetailPath(
+                              course.slug,
+                              module.id,
+                              session.id,
+                            );
+                            return (
+                              <li
+                                key={session.id}
+                                className="rounded-lg border border-white/10 px-4 py-3"
+                              >
+                                <p className="text-xs font-bold uppercase tracking-[.16em] text-accent">
+                                  Session {index + 1}
+                                </p>
+                                {sessionPath ? (
+                                  <Link
+                                    to={sessionPath}
+                                    className="mt-1 inline-flex font-semibold text-text hover:text-accent"
+                                  >
+                                    {session.title}
+                                  </Link>
+                                ) : (
+                                  <p className="mt-1 font-semibold text-text">
+                                    {session.title}
+                                  </p>
+                                )}
+                              </li>
+                            );
+                          })}
                         </ol>
                       )}
                     </section>
