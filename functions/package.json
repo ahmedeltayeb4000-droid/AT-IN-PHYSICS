@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test lib/test/smoke.test.js lib/test/ownerBootstrap.test.js lib/test/enrollmentValidation.test.js lib/test/sessionDiscovery.test.js lib/test/sessionDiscoveryMigration.test.js lib/test/lessonContentPublication.test.js lib/test/videoPackaging.test.js lib/test/videoPublication.test.js",
+    "test": "npm run build && node --test lib/test/smoke.test.js lib/test/ownerBootstrap.test.js lib/test/enrollmentValidation.test.js lib/test/sessionDiscovery.test.js lib/test/sessionDiscoveryMigration.test.js lib/test/lessonContentPublication.test.js lib/test/videoPackaging.test.js lib/test/videoPublication.test.js lib/test/videoDescriptorPublication.test.js",
     "test:integration": "node --test lib/test/grantEnrollment.integration.test.js",
     "test:session-discovery:integration": "node --test lib/test/sessionDiscovery.integration.test.js",
     "test:session-discovery-migration": "node --test lib/test/sessionDiscoveryMigration.test.js",
@@ -16,10 +16,12 @@
     "test:lesson-content:integration": "node --test lib/test/lessonContentPublication.integration.test.js",
     "test:video-packaging": "npm run build && node --test lib/test/videoPackaging.test.js",
     "test:video-publication:integration": "node --test lib/test/videoPublication.integration.test.js",
+    "test:video-publication-cli:integration": "node --test lib/test/videoDescriptorPublication.integration.test.js",
     "owner:bootstrap": "npm run build && node lib/src/tooling/bootstrapOwnerCli.js",
     "session-discovery:migrate": "npm run build && node lib/src/tooling/sessionDiscoveryMigrationCli.js",
     "lesson-content:publish": "npm run build && node lib/src/tooling/lessonContentPublicationCli.js",
-    "video:package": "npm run build && node lib/src/tooling/videoPackagingCli.js"
+    "video:package": "npm run build && node lib/src/tooling/videoPackagingCli.js",
+    "video:publish": "npm run build && node lib/src/tooling/videoDescriptorPublicationCli.js"
   },
   "dependencies": {
     "firebase-admin": "^14.3.0",
