@@ -25,6 +25,11 @@ import {
 const PROJECT_ID = "demo-at-in-physics";
 const CURRENT_UID = "student-current";
 const OTHER_UID = "student-other";
+const VIDEO_ASSET_ID = "mechanics-intro-motion-video";
+const VIDEO_CONTENT_KEY = "A".repeat(43);
+const VIDEO_SESSION_PATH =
+  "courses/mechanics/modules/motion/sessions/introduction";
+const VIDEO_ACCESS_PATH = `${VIDEO_SESSION_PATH}/videoAccess/primary`;
 let testEnvironment;
 
 function emulatorConfiguration() {
@@ -60,6 +65,24 @@ function withoutExpiresAt(userId, courseId = "mechanics") {
   const fixture = enrollment(userId, courseId);
   delete fixture.expiresAt;
   return fixture;
+}
+
+function videoSession(overrides = {}) {
+  return {
+    title: "Introduction",
+    order: 1,
+    publicationStatus: "published",
+    videoAssetId: VIDEO_ASSET_ID,
+    ...overrides,
+  };
+}
+
+function videoAccess(overrides = {}) {
+  return {
+    videoAssetId: VIDEO_ASSET_ID,
+    contentKey: VIDEO_CONTENT_KEY,
+    ...overrides,
+  };
 }
 
 async function seedDocuments(fixtures) {
@@ -919,4 +942,292 @@ test("authenticated student cannot delete a Session", async () => {
     [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
   });
   await assertFails(deleteDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("unauthenticated user cannot get video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDoc(doc(unauthenticatedDb(), VIDEO_ACCESS_PATH)));
+});
+
+test("authenticated student without Enrollment cannot get video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("active enrolled student can get valid bound video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertSucceeds(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("expired Enrollment denies video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { expiresAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")) },
+    ),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("revoked Enrollment denies video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { status: "revoked" },
+    ),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("cross-Course Enrollment denies video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_thermodynamics`]: enrollment(
+      CURRENT_UID,
+      "thermodynamics",
+    ),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("another user's Enrollment denies video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${OTHER_UID}_mechanics`]: enrollment(OTHER_UID),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("draft parent Session denies video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession({ publicationStatus: "draft" }),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("future-release parent Session denies video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession({
+      releaseAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")),
+    }),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("published unscheduled parent Session allows video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertSucceeds(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("published elapsed-release parent Session allows video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession({
+      releaseAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")),
+    }),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertSucceeds(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("missing parent Session denies video access", async () => {
+  await seedDocuments({
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("parent Session without videoAssetId denies video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: {
+      title: "Introduction",
+      order: 1,
+      publicationStatus: "published",
+    },
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("malformed parent Session videoAssetId denies video access", async () => {
+  for (const videoAssetId of [
+    "nested/path",
+    "Uppercase",
+    "repeated--hyphen",
+    "x".repeat(129),
+  ]) {
+    await testEnvironment.clearFirestore();
+    await seedDocuments({
+      [VIDEO_SESSION_PATH]: videoSession({ videoAssetId }),
+      [VIDEO_ACCESS_PATH]: videoAccess({ videoAssetId }),
+      [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+    });
+    await assertFails(
+      getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+    );
+  }
+});
+
+test("mismatched access videoAssetId denies video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess({ videoAssetId: "another-video" }),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
+});
+
+test("malformed video access document fails closed", async () => {
+  for (const accessData of [
+    { videoAssetId: VIDEO_ASSET_ID },
+    { contentKey: VIDEO_CONTENT_KEY },
+    { ...videoAccess(), forged: true },
+    videoAccess({ videoAssetId: "Uppercase" }),
+  ]) {
+    await testEnvironment.clearFirestore();
+    await seedDocuments({
+      [VIDEO_SESSION_PATH]: videoSession(),
+      [VIDEO_ACCESS_PATH]: accessData,
+      [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+    });
+    await assertFails(
+      getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+    );
+  }
+});
+
+test("malformed or noncanonical contentKey denies video access", async () => {
+  for (const contentKey of [
+    "A".repeat(42),
+    "A".repeat(44),
+    `${"A".repeat(42)}+`,
+    `${"A".repeat(42)}B`,
+  ]) {
+    await testEnvironment.clearFirestore();
+    await seedDocuments({
+      [VIDEO_SESSION_PATH]: videoSession(),
+      [VIDEO_ACCESS_PATH]: videoAccess({ contentKey }),
+      [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+    });
+    await assertFails(
+      getDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+    );
+  }
+});
+
+test("video access document ID other than primary is denied", async () => {
+  const alternatePath = `${VIDEO_SESSION_PATH}/videoAccess/alternate`;
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [alternatePath]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), alternatePath)),
+  );
+});
+
+test("video access collection list is denied", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    getDocs(
+      collection(
+        authenticatedDb(CURRENT_UID),
+        `${VIDEO_SESSION_PATH}/videoAccess`,
+      ),
+    ),
+  );
+});
+
+test("authenticated student cannot create video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    setDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH), videoAccess()),
+  );
+});
+
+test("authenticated student cannot update video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    updateDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH), {
+      contentKey: "E".repeat(43),
+    }),
+  );
+});
+
+test("authenticated student cannot delete video access", async () => {
+  await seedDocuments({
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(
+    deleteDoc(doc(authenticatedDb(CURRENT_UID), VIDEO_ACCESS_PATH)),
+  );
 });

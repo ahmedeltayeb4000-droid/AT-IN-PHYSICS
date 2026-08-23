@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { URL } from "node:url";
 import { Timestamp } from "firebase/firestore";
 import { mapEnrollmentDocument } from "../src/features/enrollments/enrollmentMapper.ts";
 import {
@@ -19,6 +21,10 @@ import {
   parseSessionDetailRouteParams,
   SessionDetailUnavailableError,
 } from "../src/features/courses/sessionDetail.ts";
+import {
+  mapVideoAccessDocument,
+  VIDEO_ACCESS_DOCUMENT_ID,
+} from "../src/features/courses/videoAccess.ts";
 
 const NOW = new Date("2030-01-01T00:00:00.000Z");
 
@@ -609,4 +615,152 @@ test("Session detail route parameters and navigation path are validated", () => 
     buildSessionDetailPath("mechanics", "mechanics-motion-basics", "bad/id"),
     null,
   );
+});
+
+test("valid Session videoAssetId maps without normalization", () => {
+  const mapped = mapSessionDocument(
+    "mechanics-intro-motion",
+    "mechanics",
+    "mechanics-motion-basics",
+    persistedSession({ videoAssetId: "mechanics-intro-motion-video" }),
+  );
+
+  assert.equal(mapped.videoAssetId, "mechanics-intro-motion-video");
+});
+
+test("Session videoAssetId remains optional", () => {
+  const mapped = mapSessionDocument(
+    "mechanics-intro-motion",
+    "mechanics",
+    "mechanics-motion-basics",
+    persistedSession(),
+  );
+
+  assert.equal("videoAssetId" in mapped, false);
+});
+
+test("malformed Session videoAssetId fails closed", () => {
+  for (const videoAssetId of [
+    "",
+    "   ",
+    " leading",
+    "trailing ",
+    "nested/path",
+    "../traversal",
+    "Uppercase",
+    "under_score",
+    "repeated--hyphen",
+    "-leading-hyphen",
+    "trailing-hyphen-",
+    "x".repeat(129),
+  ]) {
+    assert.throws(
+      () =>
+        mapSessionDocument(
+          "mechanics-intro-motion",
+          "mechanics",
+          "mechanics-motion-basics",
+          persistedSession({ videoAssetId }),
+        ),
+      /Malformed Session/,
+    );
+  }
+});
+
+test("valid bound video access maps without exposing extra fields", () => {
+  const contentKey = "A".repeat(43);
+  assert.deepEqual(
+    mapVideoAccessDocument(
+      VIDEO_ACCESS_DOCUMENT_ID,
+      "mechanics-intro-motion-video",
+      {
+        videoAssetId: "mechanics-intro-motion-video",
+        contentKey,
+      },
+    ),
+    {
+      videoAssetId: "mechanics-intro-motion-video",
+      contentKey,
+    },
+  );
+});
+
+test("malformed and noncanonical video content keys fail closed", () => {
+  for (const contentKey of [
+    "",
+    "A".repeat(42),
+    "A".repeat(44),
+    `${"A".repeat(42)}+`,
+    `${"A".repeat(42)}/`,
+    `${"A".repeat(42)}=`,
+    `${"A".repeat(42)}B`,
+  ]) {
+    assert.throws(
+      () =>
+        mapVideoAccessDocument(
+          VIDEO_ACCESS_DOCUMENT_ID,
+          "mechanics-intro-motion-video",
+          {
+            videoAssetId: "mechanics-intro-motion-video",
+            contentKey,
+          },
+        ),
+      /Video access is unavailable/,
+    );
+  }
+});
+
+test("video access asset mismatch and unknown fields fail closed", () => {
+  const contentKey = "A".repeat(43);
+  for (const value of [
+    {
+      videoAssetId: "another-video",
+      contentKey,
+    },
+    {
+      videoAssetId: "mechanics-intro-motion-video",
+      contentKey,
+      forged: true,
+    },
+  ]) {
+    assert.throws(
+      () =>
+        mapVideoAccessDocument(
+          VIDEO_ACCESS_DOCUMENT_ID,
+          "mechanics-intro-motion-video",
+          value,
+        ),
+      /Video access is unavailable/,
+    );
+  }
+});
+
+test("missing or non-primary video access document fails closed", () => {
+  assert.throws(
+    () =>
+      mapVideoAccessDocument(
+        VIDEO_ACCESS_DOCUMENT_ID,
+        "mechanics-intro-motion-video",
+        undefined,
+      ),
+    /Video access is unavailable/,
+  );
+  assert.throws(
+    () =>
+      mapVideoAccessDocument("alternate", "mechanics-intro-motion-video", {
+        videoAssetId: "mechanics-intro-motion-video",
+        contentKey: "A".repeat(43),
+      }),
+    /Video access is unavailable/,
+  );
+});
+
+test("video access repository uses one exact document read and no query", async () => {
+  const source = await readFile(
+    new URL("../src/features/courses/videoAccessRepository.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /\bgetDoc\s*\(/);
+  assert.doesNotMatch(source, /\b(?:collection|getDocs|query)\s*\(/);
 });

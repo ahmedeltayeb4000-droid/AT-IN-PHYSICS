@@ -30,16 +30,39 @@ service cloud.firestore {
       return request.auth != null && hasActiveEnrollment(courseId);
     }
 
-    function isSessionVisible() {
-      return resource.data.keys().hasAll(["publicationStatus"])
-        && resource.data.publicationStatus == "published"
+    function isSessionVisible(sessionData) {
+      return sessionData.keys().hasAll(["publicationStatus"])
+        && sessionData.publicationStatus == "published"
         && (
-          !resource.data.keys().hasAny(["releaseAt"])
+          !sessionData.keys().hasAny(["releaseAt"])
           || (
-            resource.data.releaseAt is timestamp
-            && resource.data.releaseAt <= request.time
+            sessionData.releaseAt is timestamp
+            && sessionData.releaseAt <= request.time
           )
         );
+    }
+
+    function isValidVideoAssetId(value) {
+      return value is string
+        && value.size() <= 128
+        && value.matches("^[a-z0-9]+(-[a-z0-9]+)*$");
+    }
+
+    function isValidContentKey(value) {
+      // Canonical unpadded base64url for 32 bytes has 43 characters and
+      // a final character whose unused padding bits are zero.
+      return value is string
+        && value.matches("^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$");
+    }
+
+    function isVideoAccessDocument(sessionData) {
+      return sessionData.keys().hasAll(["videoAssetId"])
+        && isValidVideoAssetId(sessionData.videoAssetId)
+        && resource.data.keys().hasAll(["videoAssetId", "contentKey"])
+        && resource.data.keys().hasOnly(["videoAssetId", "contentKey"])
+        && isValidVideoAssetId(resource.data.videoAssetId)
+        && resource.data.videoAssetId == sessionData.videoAssetId
+        && isValidContentKey(resource.data.contentKey);
     }
 
     function isSessionDiscoveryManifest() {
@@ -67,7 +90,20 @@ service cloud.firestore {
 
         match /sessions/{sessionId} {
           allow get: if canReadCourseContent(courseId)
-            && isSessionVisible();
+            && isSessionVisible(resource.data);
+
+          match /videoAccess/{accessId} {
+            allow get: if accessId == "primary"
+              && canReadCourseContent(courseId)
+              && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
+              && isSessionVisible(
+                get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data
+              )
+              && isVideoAccessDocument(
+                get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data
+              );
+            allow list, create, update, delete: if false;
+          }
         }
       }
     }

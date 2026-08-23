@@ -1,5 +1,8 @@
 import type { Course, Module, Session } from "./types";
-import { isValidLessonText } from "./sessionMapper.ts";
+import {
+  isValidLessonText,
+  isValidVideoAssetId,
+} from "./sessionMapper.ts";
 
 const CONTENT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_CONTENT_ID_LENGTH = 128;
@@ -54,7 +57,9 @@ function isValidSession(session: Session): boolean {
       (session.releaseAt.length > 0 &&
         Number.isFinite(Date.parse(session.releaseAt)))) &&
     (session.lessonText === undefined ||
-      isValidLessonText(session.lessonText))
+      isValidLessonText(session.lessonText)) &&
+    (session.videoAssetId === undefined ||
+      isValidVideoAssetId(session.videoAssetId))
   );
 }
 
