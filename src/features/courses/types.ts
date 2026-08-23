@@ -25,4 +25,5 @@ export type Session = {
   readonly order: number;
   readonly publicationStatus: SessionPublicationStatus;
   readonly releaseAt?: string;
+  readonly lessonText?: string;
 };

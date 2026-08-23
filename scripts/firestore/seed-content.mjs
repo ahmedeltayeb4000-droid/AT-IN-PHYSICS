@@ -90,6 +90,9 @@ function buildSeedPlan() {
       ...(session.releaseAt
         ? { releaseAt: releaseTimestamp(session.releaseAt) }
         : {}),
+      ...(session.lessonText !== undefined
+        ? { lessonText: session.lessonText }
+        : {}),
     };
 
     add(

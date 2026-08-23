@@ -10,6 +10,10 @@ import { buildDashboardEnrollmentRows } from "../src/features/enrollments/dashbo
 import { mapSessionDiscoveryManifest } from "../src/features/courses/sessionDiscovery.ts";
 import { buildCourseCurriculum } from "../src/features/courses/courseCurriculum.ts";
 import {
+  mapSessionDocument,
+  MAX_LESSON_TEXT_LENGTH,
+} from "../src/features/courses/sessionMapper.ts";
+import {
   buildSessionDetailPath,
   composeSessionDetail,
   parseSessionDetailRouteParams,
@@ -71,6 +75,15 @@ function sessionRecord(overrides = {}) {
     id: "mechanics-intro-motion",
     courseId: "mechanics",
     moduleId: "mechanics-motion-basics",
+    title: "Introduction to Motion",
+    order: 1,
+    publicationStatus: "published",
+    ...overrides,
+  };
+}
+
+function persistedSession(overrides = {}) {
+  return {
     title: "Introduction to Motion",
     order: 1,
     publicationStatus: "published",
@@ -389,6 +402,102 @@ test("Session detail composes verified Course, Module, and Session metadata", ()
       module: expectedModule,
       session: expectedSession,
     },
+  );
+});
+
+test("valid textual lesson content maps without normalization", () => {
+  const lessonText = "Start with a reference point.\nThen observe motion.";
+  const mapped = mapSessionDocument(
+    "mechanics-intro-motion",
+    "mechanics",
+    "mechanics-motion-basics",
+    persistedSession({ lessonText }),
+  );
+
+  assert.equal(mapped.lessonText, lessonText);
+});
+
+test("Session lesson content is optional", () => {
+  const mapped = mapSessionDocument(
+    "mechanics-intro-motion",
+    "mechanics",
+    "mechanics-motion-basics",
+    persistedSession(),
+  );
+
+  assert.equal("lessonText" in mapped, false);
+});
+
+test("malformed or non-string lesson content fails closed", () => {
+  for (const lessonText of [null, 1, { text: "forged" }, ["forged"]]) {
+    assert.throws(
+      () =>
+        mapSessionDocument(
+          "mechanics-intro-motion",
+          "mechanics",
+          "mechanics-motion-basics",
+          persistedSession({ lessonText }),
+        ),
+      /Malformed Session/,
+    );
+  }
+});
+
+test("empty, whitespace-padded, and oversized lesson text fails closed", () => {
+  for (const lessonText of [
+    "",
+    "   ",
+    " leading",
+    "trailing ",
+    "x".repeat(MAX_LESSON_TEXT_LENGTH + 1),
+  ]) {
+    assert.throws(
+      () =>
+        mapSessionDocument(
+          "mechanics-intro-motion",
+          "mechanics",
+          "mechanics-motion-basics",
+          persistedSession({ lessonText }),
+        ),
+      /Malformed Session/,
+    );
+  }
+});
+
+test("Session detail composition preserves valid lesson content", () => {
+  const session = sessionRecord({
+    lessonText: "Velocity includes both speed and direction.",
+  });
+
+  const detail = composeSessionDetail(
+    course(),
+    moduleRecord(),
+    [session.id],
+    session.id,
+    session,
+  );
+
+  assert.equal(
+    detail.session.lessonText,
+    "Velocity includes both speed and direction.",
+  );
+});
+
+test("malformed lesson content cannot produce partial Session detail", () => {
+  const session = sessionRecord({ lessonText: "   " });
+
+  assert.throws(
+    () =>
+      composeSessionDetail(
+        course(),
+        moduleRecord(),
+        [session.id],
+        session.id,
+        session,
+      ),
+    (error) =>
+      error instanceof SessionDetailUnavailableError &&
+      error.reason === "session-unavailable",
   );
 });
 

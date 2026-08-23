@@ -1,5 +1,4 @@
 import {
-  Timestamp,
   collection,
   doc,
   getDoc,
@@ -22,17 +21,11 @@ import {
   SessionDetailUnavailableError,
   type SessionDetail,
 } from "./sessionDetail";
+import { mapSessionDocument } from "./sessionMapper";
 import type { Course, Module, Session } from "./types";
 
 type CourseDocument = Omit<Course, "id">;
 type ModuleDocument = Pick<Module, "title" | "order">;
-type SessionDocument = Pick<
-  Session,
-  "title" | "order" | "publicationStatus"
-> & {
-  readonly releaseAt?: Timestamp;
-};
-
 function toCourse(snapshot: QueryDocumentSnapshot): Course {
   const data = snapshot.data() as CourseDocument;
   return {
@@ -63,39 +56,6 @@ function toModule(
     courseId,
     title: data.title,
     order: data.order,
-  };
-}
-
-function toSession(
-  snapshot: DocumentSnapshot,
-  courseId: string,
-  moduleId: string,
-): Session {
-  const data = snapshot.data() as SessionDocument;
-  const hasReleaseAt = Object.prototype.hasOwnProperty.call(data, "releaseAt");
-  const releaseAt = data.releaseAt;
-  if (
-    typeof data.title !== "string" ||
-    !data.title.trim() ||
-    typeof data.order !== "number" ||
-    !Number.isSafeInteger(data.order) ||
-    data.order < 0 ||
-    (data.publicationStatus !== "draft" &&
-      data.publicationStatus !== "published") ||
-    (hasReleaseAt && !(releaseAt instanceof Timestamp))
-  ) {
-    throw new Error("Malformed Session document.");
-  }
-  return {
-    id: snapshot.id,
-    courseId,
-    moduleId,
-    title: data.title,
-    order: data.order,
-    publicationStatus: data.publicationStatus,
-    ...(releaseAt instanceof Timestamp
-      ? { releaseAt: releaseAt.toDate().toISOString() }
-      : {}),
   };
 }
 
@@ -216,7 +176,7 @@ export async function getSessionById(
     ),
   );
   return snapshot.exists()
-    ? toSession(snapshot, courseId, moduleId)
+    ? mapSessionDocument(snapshot.id, courseId, moduleId, snapshot.data())
     : null;
 }
 

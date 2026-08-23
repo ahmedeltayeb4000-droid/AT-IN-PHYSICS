@@ -17,6 +17,8 @@ export const curriculumSessions = [
     title: "Introduction to Motion",
     order: 1,
     publicationStatus: "published",
+    lessonText:
+      "Motion describes how an object's position changes over time.\n\nIn this lesson, begin by identifying a reference point, then describe the object's position relative to it.",
   },
   {
     id: "mechanics-displacement",

@@ -290,9 +290,15 @@ export function SessionDetailPage() {
               <p className="mt-3 text-text-muted">{course.title}</p>
               <div className="mt-10 rounded-xl border border-white/10 bg-white/[.03] p-6">
                 <h2 className="text-xl font-bold text-text">Lesson content</h2>
-                <p className="mt-2 text-text-muted">
-                  Lesson content is not available yet.
-                </p>
+                {session.lessonText ? (
+                  <p className="mt-2 whitespace-pre-wrap text-text-muted">
+                    {session.lessonText}
+                  </p>
+                ) : (
+                  <p className="mt-2 text-text-muted">
+                    Lesson content is not available yet.
+                  </p>
+                )}
               </div>
             </GlassCard>
           </div>
