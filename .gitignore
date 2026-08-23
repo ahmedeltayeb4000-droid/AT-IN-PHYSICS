@@ -14,6 +14,7 @@ functions/lib
 functions/node_modules
 .firebase
 *.local
+/video-packages/
 
 # Editor directories and files
 .vscode/*

@@ -23,6 +23,8 @@
     "owner:bootstrap": "npm --prefix functions run owner:bootstrap --",
     "session-discovery:migrate": "npm --prefix functions run session-discovery:migrate --",
     "lesson-content:publish": "npm --prefix functions run lesson-content:publish --",
+    "video:package": "npm --prefix functions run video:package --",
+    "backend:test:video-packaging": "npm --prefix functions run test:video-packaging",
     "emulators": "firebase emulators:start --project demo-at-in-physics --only auth,firestore,functions"
   },
   "dependencies": {
