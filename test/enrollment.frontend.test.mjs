@@ -8,6 +8,7 @@ import {
 } from "../src/features/enrollments/entitlement.ts";
 import { buildDashboardEnrollmentRows } from "../src/features/enrollments/dashboardEnrollmentViewModel.ts";
 import { mapSessionDiscoveryManifest } from "../src/features/courses/sessionDiscovery.ts";
+import { buildCourseCurriculum } from "../src/features/courses/courseCurriculum.ts";
 
 const NOW = new Date("2030-01-01T00:00:00.000Z");
 
@@ -45,6 +46,28 @@ function course(overrides = {}) {
     title: "Mechanics",
     shortDescription: "Motion, forces, and energy.",
     status: "published",
+    ...overrides,
+  };
+}
+
+function moduleRecord(overrides = {}) {
+  return {
+    id: "mechanics-motion-basics",
+    courseId: "mechanics",
+    title: "Motion Basics",
+    order: 1,
+    ...overrides,
+  };
+}
+
+function sessionRecord(overrides = {}) {
+  return {
+    id: "mechanics-intro-motion",
+    courseId: "mechanics",
+    moduleId: "mechanics-motion-basics",
+    title: "Introduction to Motion",
+    order: 1,
+    publicationStatus: "published",
     ...overrides,
   };
 }
@@ -276,4 +299,68 @@ test("unsafe or duplicate discovered Session IDs are rejected", () => {
       /Malformed/,
     );
   }
+});
+
+test("Course curriculum preserves ordered Modules and manifest Session order", () => {
+  const modules = [
+    moduleRecord(),
+    moduleRecord({
+      id: "mechanics-forces",
+      title: "Forces",
+      order: 2,
+    }),
+  ];
+  const curriculum = buildCourseCurriculum(modules, [
+    [
+      sessionRecord({ id: "second-in-manifest", order: 2 }),
+      sessionRecord({ id: "first-by-field", order: 1 }),
+    ],
+    [
+      sessionRecord({
+        id: "mechanics-newton-laws",
+        moduleId: "mechanics-forces",
+        title: "Newton's Laws",
+      }),
+    ],
+  ]);
+
+  assert.deepEqual(
+    curriculum.map(({ module }) => module.id),
+    ["mechanics-motion-basics", "mechanics-forces"],
+  );
+  assert.deepEqual(
+    curriculum[0].sessions.map((session) => session.id),
+    ["second-in-manifest", "first-by-field"],
+  );
+});
+
+test("Module with an empty discovery manifest has no Sessions", () => {
+  const curriculum = buildCourseCurriculum([moduleRecord()], [[]]);
+  assert.deepEqual(curriculum[0].sessions, []);
+});
+
+test("missing or inconsistent curriculum data fails closed", () => {
+  assert.throws(
+    () => buildCourseCurriculum([moduleRecord()], []),
+    /incomplete/,
+  );
+  assert.throws(
+    () =>
+      buildCourseCurriculum(
+        [moduleRecord()],
+        [[sessionRecord({ moduleId: "another-module" })]],
+      ),
+    /inconsistent/,
+  );
+});
+
+test("unavailable entitlement does not authorize protected curriculum", () => {
+  assert.equal(
+    hasCourseEntitlement(
+      [enrollment({ status: "revoked" })],
+      "mechanics",
+      NOW,
+    ),
+    false,
+  );
 });

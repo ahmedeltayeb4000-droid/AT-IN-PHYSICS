@@ -16,6 +16,7 @@ import {
   SESSION_DISCOVERY_DOCUMENT_ID,
   mapSessionDiscoveryManifest,
 } from "./sessionDiscovery";
+import { buildCourseCurriculum, type CourseCurriculumModule } from "./courseCurriculum";
 import type { Course, Module, Session } from "./types";
 
 type CourseDocument = Omit<Course, "id">;
@@ -29,7 +30,13 @@ type SessionDocument = Pick<
 
 function toCourse(snapshot: QueryDocumentSnapshot): Course {
   const data = snapshot.data() as CourseDocument;
-  return { id: snapshot.id, ...data };
+  return {
+    id: snapshot.id,
+    slug: data.slug,
+    title: data.title,
+    shortDescription: data.shortDescription,
+    status: data.status,
+  };
 }
 
 function toModule(
@@ -37,7 +44,21 @@ function toModule(
   courseId: string,
 ): Module {
   const data = snapshot.data() as ModuleDocument;
-  return { id: snapshot.id, courseId, ...data };
+  if (
+    typeof data.title !== "string" ||
+    !data.title.trim() ||
+    typeof data.order !== "number" ||
+    !Number.isSafeInteger(data.order) ||
+    data.order < 0
+  ) {
+    throw new Error("Malformed Module document.");
+  }
+  return {
+    id: snapshot.id,
+    courseId,
+    title: data.title,
+    order: data.order,
+  };
 }
 
 function toSession(
@@ -46,6 +67,20 @@ function toSession(
   moduleId: string,
 ): Session {
   const data = snapshot.data() as SessionDocument;
+  const hasReleaseAt = Object.prototype.hasOwnProperty.call(data, "releaseAt");
+  const releaseAt = data.releaseAt;
+  if (
+    typeof data.title !== "string" ||
+    !data.title.trim() ||
+    typeof data.order !== "number" ||
+    !Number.isSafeInteger(data.order) ||
+    data.order < 0 ||
+    (data.publicationStatus !== "draft" &&
+      data.publicationStatus !== "published") ||
+    (hasReleaseAt && !(releaseAt instanceof Timestamp))
+  ) {
+    throw new Error("Malformed Session document.");
+  }
   return {
     id: snapshot.id,
     courseId,
@@ -53,8 +88,8 @@ function toSession(
     title: data.title,
     order: data.order,
     publicationStatus: data.publicationStatus,
-    ...(data.releaseAt
-      ? { releaseAt: data.releaseAt.toDate().toISOString() }
+    ...(releaseAt instanceof Timestamp
+      ? { releaseAt: releaseAt.toDate().toISOString() }
       : {}),
   };
 }
@@ -115,6 +150,16 @@ export async function getModuleSessions(
   }
 
   return sessions as Session[];
+}
+
+export async function getCourseCurriculum(
+  courseId: string,
+): Promise<CourseCurriculumModule[]> {
+  const modules = await getCourseModules(courseId);
+  const sessionsByModule = await Promise.all(
+    modules.map((module) => getModuleSessions(courseId, module.id)),
+  );
+  return buildCourseCurriculum(modules, sessionsByModule);
 }
 
 export async function getModuleSessionIds(
