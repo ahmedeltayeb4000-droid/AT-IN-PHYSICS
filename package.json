@@ -31,6 +31,8 @@
     "hosting:release:prepare": "npm run build && node scripts/hosting/prepare-release.mjs",
     "hosting:release:test:unit": "node --test test/hosting.release.test.mjs",
     "hosting:release:test": "npm run hosting:release:test:unit && npm run build && node scripts/hosting/prepare-emulator-fixture.mjs && firebase emulators:exec --project demo-at-in-physics --only hosting \"node --test test/hosting.emulator.test.mjs\" && node scripts/hosting/prepare-release.mjs",
+    "hosting:deploy:preflight": "node scripts/hosting/deploy-preflight.mjs",
+    "hosting:deploy:preflight:test": "node --test test/hosting.deploy.preflight.test.mjs",
     "backend:test:video-publication-cli:integration": "npm run backend:build && firebase emulators:exec --project demo-at-in-physics --only firestore \"npm --prefix functions run test:video-publication-cli:integration\"",
     "emulators": "firebase emulators:start --project demo-at-in-physics --only auth,firestore,functions"
   },

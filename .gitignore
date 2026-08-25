@@ -18,6 +18,8 @@ functions/node_modules
 /hosting-video-staging/
 /hosting-release/
 /hosting-release.tmp-*/
+/hosting-deploy-preflight/
+/hosting-deploy-preflight.tmp-*/
 
 # Editor directories and files
 .vscode/*
