@@ -5,7 +5,21 @@ import tseslint from "typescript-eslint";
 import prettier from "eslint-config-prettier";
 
 export default tseslint.config(
-  { ignores: ["dist", "functions/lib", "node_modules"] },
+  {
+    ignores: ["dist", "hosting-release", "functions/lib", "node_modules"],
+  },
+  {
+    files: ["scripts/**/*.mjs", "test/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        Buffer: "readonly",
+        console: "readonly",
+        fetch: "readonly",
+        process: "readonly",
+        URL: "readonly",
+      },
+    },
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   reactHooks.configs.flat["recommended-latest"],

@@ -6,6 +6,48 @@
   "functions": {
     "source": "functions"
   },
+  "hosting": {
+    "public": "hosting-release",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "headers": [
+      {
+        "regex": ".*",
+        "headers": [
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "Permissions-Policy",
+            "value": "camera=(), microphone=(), geolocation=()"
+          }
+        ]
+      },
+      {
+        "regex": ".*\\.atv1",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/octet-stream"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600, must-revalidate, no-transform"
+          }
+        ]
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "!/@(protected-media)/**",
+        "destination": "/index.html"
+      }
+    ]
+  },
   "emulators": {
     "auth": {
       "port": 9099
@@ -15,6 +57,9 @@
     },
     "functions": {
       "port": 5001
+    },
+    "hosting": {
+      "port": 5000
     }
   }
 }

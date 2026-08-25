@@ -16,6 +16,8 @@ functions/node_modules
 *.local
 /video-packages/
 /hosting-video-staging/
+/hosting-release/
+/hosting-release.tmp-*/
 
 # Editor directories and files
 .vscode/*
