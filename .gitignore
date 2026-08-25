@@ -15,6 +15,7 @@ functions/node_modules
 .firebase
 *.local
 /video-packages/
+/hosting-video-staging/
 
 # Editor directories and files
 .vscode/*

@@ -27,6 +27,7 @@
     "backend:test:video-packaging": "npm --prefix functions run test:video-packaging",
     "backend:test:video-publication:integration": "npm run backend:build && firebase emulators:exec --project demo-at-in-physics --only firestore \"npm --prefix functions run test:video-publication:integration\"",
     "video:publish": "npm --prefix functions run video:publish --",
+    "video:hosting:prepare": "npm --prefix functions run video:hosting:prepare --",
     "backend:test:video-publication-cli:integration": "npm run backend:build && firebase emulators:exec --project demo-at-in-physics --only firestore \"npm --prefix functions run test:video-publication-cli:integration\"",
     "emulators": "firebase emulators:start --project demo-at-in-physics --only auth,firestore,functions"
   },
