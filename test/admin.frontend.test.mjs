@@ -93,24 +93,90 @@ test("admin shell exposes only Overview and Courses navigation", async () => {
   assert.match(layout, /md:grid-cols/);
 });
 
-test("Courses page uses the safe repository and renders status plus sanitized states", async () => {
+test("owner Courses page uses the dedicated inventory repository and renders both statuses", async () => {
   const page = await source("../src/pages/admin/AdminCoursesPage.tsx");
-  assert.match(page, /queryFn:\s*getCourses/);
+  assert.match(page, /queryFn:\s*getAdminCourses/);
   assert.match(page, /Published/);
   assert.match(page, /Draft/);
-  assert.match(page, /No published Courses/);
+  assert.match(page, /No Courses/);
   assert.match(page, /Unable to load Courses/);
   assert.match(page, /Loading Courses/);
   assert.doesNotMatch(page, /error\.message|FirebaseError|\.stack\b/);
 });
 
-test("current Course repository legitimately exposes published Courses only", async () => {
+test("student Course repository remains published-only and admin inventory is isolated", async () => {
   const repository = await source(
     "../src/features/courses/courseRepository.ts",
   );
   assert.match(repository, /where\("status",\s*"==",\s*"published"\)/);
   const page = await source("../src/pages/admin/AdminCoursesPage.tsx");
-  assert.match(page, /Draft Courses are not available to the browser/);
+  assert.doesNotMatch(page, /getCourses/);
+  const adminRepository = await source(
+    "../src/features/admin/adminCourseRepository.ts",
+  );
+  assert.match(adminRepository, /collection\(firebaseDb,\s*"courses"\)/);
+  assert.doesNotMatch(adminRepository, /where\(/);
+});
+
+test("admin Course mapper returns exact data and rejects malformed documents", async () => {
+  const { mapAdminCourseDocument } =
+    await import("../src/features/admin/adminCourseMapper.ts");
+  assert.deepEqual(
+    mapAdminCourseDocument("draft-course", {
+      slug: "draft-course",
+      title: "Draft Course",
+      shortDescription: "Draft description",
+      status: "draft",
+    }),
+    {
+      id: "draft-course",
+      slug: "draft-course",
+      title: "Draft Course",
+      shortDescription: "Draft description",
+      status: "draft",
+    },
+  );
+  for (const [id, value] of [
+    [
+      "Unsafe/Path",
+      {
+        slug: "Unsafe/Path",
+        title: "Title",
+        shortDescription: "Description",
+        status: "draft",
+      },
+    ],
+    [
+      "course",
+      {
+        slug: "other",
+        title: "Title",
+        shortDescription: "Description",
+        status: "draft",
+      },
+    ],
+    [
+      "course",
+      {
+        slug: "course",
+        title: "Title",
+        shortDescription: "Description",
+        status: "draft",
+        secret: true,
+      },
+    ],
+    [
+      "course",
+      {
+        slug: "course",
+        title: "Bad\u0000Title",
+        shortDescription: "Description",
+        status: "draft",
+      },
+    ],
+  ]) {
+    assert.throws(() => mapAdminCourseDocument(id, value));
+  }
 });
 
 test("admin frontend introduces no administrative write or privileged SDK API", async () => {
@@ -118,6 +184,8 @@ test("admin frontend introduces no administrative write or privileged SDK API", 
     "../src/pages/admin/AdminLayout.tsx",
     "../src/pages/admin/AdminOverviewPage.tsx",
     "../src/pages/admin/AdminCoursesPage.tsx",
+    "../src/features/admin/adminCourseRepository.ts",
+    "../src/features/admin/adminCourseMapper.ts",
     "../src/features/auth/AuthProvider.tsx",
     "../src/features/auth/AuthGuards.tsx",
   ];

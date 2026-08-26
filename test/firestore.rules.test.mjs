@@ -98,6 +98,12 @@ function authenticatedDb(uid) {
   return testEnvironment.authenticatedContext(uid).firestore();
 }
 
+function ownerDb(owner = true) {
+  return testEnvironment
+    .authenticatedContext("trusted-owner", { owner })
+    .firestore();
+}
+
 function unauthenticatedDb() {
   return testEnvironment.unauthenticatedContext().firestore();
 }
@@ -248,6 +254,69 @@ test("draft Course remains publicly unreadable", async () => {
     "courses/draft-course": { status: "draft", title: "Draft" },
   });
   await assertFails(getDoc(doc(unauthenticatedDb(), "courses/draft-course")));
+});
+
+test("authenticated non-owner and missing or false owner claims cannot read a draft Course", async () => {
+  await seedDocuments({
+    "courses/draft-course": { status: "draft", title: "Draft" },
+  });
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), "courses/draft-course")));
+  await assertFails(getDoc(doc(ownerDb(false), "courses/draft-course")));
+});
+
+test("owner claim reads draft Course and lists draft plus published inventory", async () => {
+  await seedDocuments({
+    "courses/draft-course": { status: "draft", title: "Draft" },
+    "courses/published-course": { status: "published", title: "Published" },
+  });
+  await assertSucceeds(getDoc(doc(ownerDb(), "courses/draft-course")));
+  const snapshot = await assertSucceeds(getDocs(collection(ownerDb(), "courses")));
+  assert.deepEqual(snapshot.docs.map(({ id }) => id).sort(), [
+    "draft-course",
+    "published-course",
+  ]);
+});
+
+test("non-owner Course listing remains constrained to published documents", async () => {
+  await seedDocuments({
+    "courses/draft-course": { status: "draft", title: "Draft" },
+    "courses/published-course": { status: "published", title: "Published" },
+  });
+  const publishedQuery = query(
+    collection(authenticatedDb(CURRENT_UID), "courses"),
+    where("status", "==", "published"),
+  );
+  const snapshot = await assertSucceeds(getDocs(publishedQuery));
+  assert.deepEqual(snapshot.docs.map(({ id }) => id), ["published-course"]);
+  await assertFails(getDocs(collection(authenticatedDb(CURRENT_UID), "courses")));
+});
+
+test("owner cannot create, update, or delete Course documents", async () => {
+  const path = "courses/draft-course";
+  await seedDocuments({ [path]: { status: "draft", title: "Draft" } });
+  await assertFails(setDoc(doc(ownerDb(), "courses/new-course"), { status: "draft" }));
+  await assertFails(updateDoc(doc(ownerDb(), path), { status: "published" }));
+  await assertFails(deleteDoc(doc(ownerDb(), path)));
+});
+
+test("owner claim grants no additional Module, Session, or videoAccess privilege", async () => {
+  const modulePath = "courses/mechanics/modules/motion";
+  const sessionPath = `${modulePath}/sessions/introduction`;
+  const accessPath = `${sessionPath}/videoAccess/primary`;
+  await seedDocuments({
+    [modulePath]: { title: "Motion", order: 1 },
+    [sessionPath]: videoSession(),
+    [accessPath]: videoAccess(),
+  });
+  await assertFails(getDoc(doc(ownerDb(), modulePath)));
+  await assertFails(getDoc(doc(ownerDb(), sessionPath)));
+  await assertFails(getDoc(doc(ownerDb(), accessPath)));
+  await assertFails(
+    setDoc(doc(ownerDb(), "courses/mechanics/modules/other"), {
+      title: "Other",
+      order: 2,
+    }),
+  );
 });
 
 test("authenticated student without Enrollment cannot read a Module", async () => {

@@ -27,6 +27,7 @@
     "enrollment:grant": "npm --prefix functions run enrollment:grant --",
     "course:create": "npm --prefix functions run course:create --",
     "backend:test:course-creation": "npm --prefix functions run test:course-creation",
+    "backend:test:course-inventory": "npm --prefix functions run test:course-inventory",
     "backend:test:course-creation:integration": "npm run backend:build && firebase emulators:exec --project demo-at-in-physics --only auth,firestore \"npm --prefix functions run test:course-creation:integration\"",
     "module:create": "npm --prefix functions run module:create --",
     "backend:test:module-creation": "npm --prefix functions run test:module-creation",

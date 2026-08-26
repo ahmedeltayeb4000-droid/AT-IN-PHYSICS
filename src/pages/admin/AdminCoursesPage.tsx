@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "../../components/ui/Badge";
 import { GlassCard } from "../../components/ui/Card";
-import { getCourses } from "../../features/courses/courseRepository";
+import { getAdminCourses } from "../../features/admin/adminCourseRepository";
 
 export function AdminCoursesPage() {
   const courses = useQuery({
-    queryKey: ["courses", "published"],
-    queryFn: getCourses,
+    queryKey: ["admin", "courses", "inventory"],
+    queryFn: getAdminCourses,
   });
   return (
     <section aria-labelledby="admin-courses-title">
@@ -14,12 +14,10 @@ export function AdminCoursesPage() {
         Courses
       </h2>
       <p className="mt-2 text-text-muted">
-        Read-only view of Courses currently permitted by frontend Firestore
-        Rules.
+        Read-only owner inventory of draft and published Courses.
       </p>
       <p className="mt-3 rounded-lg border border-border bg-panel/50 p-3 text-sm text-text-muted">
-        Draft Courses are not available to the browser. Use trusted backend
-        tooling for complete content administration.
+        Course changes remain available only through trusted backend tooling.
       </p>
       {courses.isPending ? (
         <div
@@ -37,9 +35,9 @@ export function AdminCoursesPage() {
         </GlassCard>
       ) : courses.data.length === 0 ? (
         <GlassCard className="mt-8 p-6 text-center">
-          <h3 className="font-bold text-text">No published Courses</h3>
+          <h3 className="font-bold text-text">No Courses</h3>
           <p className="mt-2 text-sm text-text-muted">
-            Published Courses will appear here when they are safely readable.
+            Draft and published Courses will appear here.
           </p>
         </GlassCard>
       ) : (

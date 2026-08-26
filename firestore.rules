@@ -30,6 +30,10 @@ service cloud.firestore {
       return request.auth != null && hasActiveEnrollment(courseId);
     }
 
+    function isOwner() {
+      return request.auth != null && request.auth.token.owner == true;
+    }
+
     function isSessionVisible(sessionData) {
       return sessionData.keys().hasAll(["publicationStatus"])
         && sessionData.publicationStatus == "published"
@@ -77,7 +81,7 @@ service cloud.firestore {
     }
 
     match /courses/{courseId} {
-      allow read: if resource.data.status == "published";
+      allow read: if resource.data.status == "published" || isOwner();
 
       match /modules/{moduleId} {
         allow read: if canReadCourseContent(courseId);
