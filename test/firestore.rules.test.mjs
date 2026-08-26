@@ -400,7 +400,107 @@ test("Course create authority does not grant writes to adjacent resources", asyn
   }
 });
 
-test("owner claim grants no additional Module, Session, or videoAccess privilege", async () => {
+test("owner creates an exact Module only beneath a valid existing Course", async () => {
+  await seedDocuments({
+    "courses/module-course": courseDocument("module-course"),
+  });
+  const path = "courses/module-course/modules/motion";
+  await assertSucceeds(
+    setDoc(doc(ownerDb(), path), { title: "Motion", order: 0 }),
+  );
+  const snapshot = await assertSucceeds(getDoc(doc(ownerDb(), path)));
+  assert.deepEqual(snapshot.data(), { title: "Motion", order: 0 });
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    const modules = await getDocs(
+      collection(context.firestore(), "courses/module-course/modules"),
+    );
+    assert.deepEqual(modules.docs.map(({ id }) => id), ["motion"]);
+  });
+});
+
+test("Module create requires owner true and a valid parent Course", async () => {
+  await seedDocuments({
+    "courses/module-course": courseDocument("module-course"),
+    "courses/malformed-course": {
+      ...courseDocument("malformed-course"),
+      extra: true,
+    },
+  });
+  const data = { title: "Motion", order: 0 };
+  await assertFails(
+    setDoc(doc(unauthenticatedDb(), "courses/module-course/modules/unauth"), data),
+  );
+  await assertFails(
+    setDoc(doc(authenticatedDb(CURRENT_UID), "courses/module-course/modules/student"), data),
+  );
+  await assertFails(
+    setDoc(doc(ownerDb(false), "courses/module-course/modules/false-owner"), data),
+  );
+  await assertFails(
+    setDoc(doc(ownerDb(), "courses/missing-course/modules/orphan"), data),
+  );
+  await assertFails(
+    setDoc(doc(ownerDb(), "courses/malformed-course/modules/module"), data),
+  );
+});
+
+test("Module create rejects ID, schema, title, order, and path manipulation", async () => {
+  await seedDocuments({
+    "courses/module-course": courseDocument("module-course"),
+    "courses/other-course": courseDocument("other-course"),
+  });
+  const attempts = [
+    ["Unsafe", { title: "Motion", order: 0 }],
+    ["module", { order: 0 }],
+    ["module", { title: "Motion" }],
+    ["module", { title: "Motion", order: 0, status: "draft" }],
+    ["module", { title: "Motion", order: 0, owner: true }],
+    ["module", { title: "", order: 0 }],
+    ["module", { title: " Motion", order: 0 }],
+    ["module", { title: "Motion ", order: 0 }],
+    ["module", { title: "Bad\u0000Title", order: 0 }],
+    ["module", { title: "a".repeat(161), order: 0 }],
+    ["module", { title: "Motion", order: -1 }],
+    ["module", { title: "Motion", order: 1.5 }],
+    ["module", { title: "Motion", order: 9007199254740992 }],
+    ["module", { title: "Motion", order: "0" }],
+  ];
+  for (const [moduleId, data] of attempts) {
+    await assertFails(
+      setDoc(doc(ownerDb(), `courses/module-course/modules/${moduleId}`), data),
+    );
+  }
+  await assertSucceeds(
+    setDoc(doc(ownerDb(), "courses/other-course/modules/module"), {
+      title: "Other Course Module",
+      order: Number.MAX_SAFE_INTEGER,
+    }),
+  );
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    assert.equal(
+      (
+        await getDoc(
+          doc(context.firestore(), "courses/module-course/modules/module"),
+        )
+      ).exists(),
+      false,
+    );
+  });
+});
+
+test("owner Module creation is create-only and owner listing remains denied", async () => {
+  const path = "courses/module-course/modules/existing";
+  await seedDocuments({
+    "courses/module-course": courseDocument("module-course"),
+    [path]: { title: "Existing", order: 0 },
+  });
+  await assertFails(setDoc(doc(ownerDb(), path), { title: "Changed", order: 1 }));
+  await assertFails(updateDoc(doc(ownerDb(), path), { order: 1 }));
+  await assertFails(deleteDoc(doc(ownerDb(), path)));
+  await assertFails(getDocs(collection(ownerDb(), "courses/module-course/modules")));
+});
+
+test("owner exact Module get grants no Session or videoAccess privilege", async () => {
   const modulePath = "courses/mechanics/modules/motion";
   const sessionPath = `${modulePath}/sessions/introduction`;
   const accessPath = `${sessionPath}/videoAccess/primary`;
@@ -409,7 +509,7 @@ test("owner claim grants no additional Module, Session, or videoAccess privilege
     [sessionPath]: videoSession(),
     [accessPath]: videoAccess(),
   });
-  await assertFails(getDoc(doc(ownerDb(), modulePath)));
+  await assertSucceeds(getDoc(doc(ownerDb(), modulePath)));
   await assertFails(getDoc(doc(ownerDb(), sessionPath)));
   await assertFails(getDoc(doc(ownerDb(), accessPath)));
   await assertFails(

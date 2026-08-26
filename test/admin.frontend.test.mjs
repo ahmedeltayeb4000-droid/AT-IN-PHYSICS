@@ -239,6 +239,61 @@ test("Course creation UI prevents duplicates, refreshes inventory, and sanitizes
   assert.doesNotMatch(repository, /updateDoc|deleteDoc|addDoc|merge\s*:/);
 });
 
+test("Module creation builder produces the exact fixed-path payload", async () => {
+  const { buildAdminModuleCreation } = await import(
+    "../src/features/admin/adminModuleCreationValidation.ts"
+  );
+  assert.deepEqual(
+    buildAdminModuleCreation({
+      courseId: "mechanics",
+      moduleId: "motion",
+      title: "Motion",
+      order: "0",
+      status: "published",
+      path: "enrollments/target",
+    }),
+    {
+      courseId: "mechanics",
+      moduleId: "motion",
+      document: { title: "Motion", order: 0 },
+    },
+  );
+});
+
+test("Module creation validation matches IDs, title, and safe integer order", async () => {
+  const { buildAdminModuleCreation } = await import(
+    "../src/features/admin/adminModuleCreationValidation.ts"
+  );
+  for (const input of [
+    { courseId: "Unsafe", moduleId: "module", title: "Title", order: "0" },
+    { courseId: "course", moduleId: "../module", title: "Title", order: "0" },
+    { courseId: "course", moduleId: "module", title: " Title", order: "0" },
+    { courseId: "course", moduleId: "module", title: "Title", order: "-1" },
+    { courseId: "course", moduleId: "module", title: "Title", order: "1.5" },
+    { courseId: "course", moduleId: "module", title: "Title", order: "9007199254740992" },
+  ]) {
+    assert.throws(() => buildAdminModuleCreation(input));
+  }
+});
+
+test("Module creation UI uses Course selection, fixed transaction, and sanitized states", async () => {
+  const page = await source("../src/pages/admin/AdminCoursesPage.tsx");
+  const repository = await source(
+    "../src/features/admin/adminModuleCreation.ts",
+  );
+  assert.match(page, /Create Module/);
+  assert.match(page, /<Select[\s\S]*label="Course"/);
+  assert.match(page, /courses\.data\?\.map/);
+  assert.match(page, /moduleCreation\.isPending/);
+  assert.match(page, /Module created successfully/);
+  assert.doesNotMatch(page, /moduleCreation\.error\.message|\.stack\b/);
+  assert.match(repository, /"courses"[\s\S]*proposal\.courseId[\s\S]*"modules"[\s\S]*proposal\.moduleId/);
+  assert.match(repository, /runTransaction/);
+  assert.match(repository, /transaction\.get/);
+  assert.match(repository, /transaction\.set\(reference,\s*proposal\.document\)/);
+  assert.doesNotMatch(repository, /updateDoc|deleteDoc|addDoc|merge\s*:/);
+});
+
 test("admin frontend introduces no update, delete, random-ID, or privileged SDK API", async () => {
   const paths = [
     "../src/pages/admin/AdminLayout.tsx",
@@ -248,6 +303,8 @@ test("admin frontend introduces no update, delete, random-ID, or privileged SDK 
     "../src/features/admin/adminCourseMapper.ts",
     "../src/features/admin/adminCourseCreation.ts",
     "../src/features/admin/adminCourseCreationValidation.ts",
+    "../src/features/admin/adminModuleCreation.ts",
+    "../src/features/admin/adminModuleCreationValidation.ts",
     "../src/features/auth/AuthProvider.tsx",
     "../src/features/auth/AuthGuards.tsx",
   ];

@@ -47,8 +47,7 @@ service cloud.firestore {
         && !value.matches(".*[\\x00-\\x1F\\x7F].*");
     }
 
-    function isValidCreatedCourse(courseId) {
-      let data = request.resource.data;
+    function isValidCourseData(courseId, data) {
       return data.keys().hasAll([
           "slug",
           "title",
@@ -63,9 +62,28 @@ service cloud.firestore {
         ])
         && isValidCourseId(courseId)
         && data.slug == courseId
-        && data.status == "draft"
+        && (data.status == "draft" || data.status == "published")
         && isValidCourseText(data.title, 160)
         && isValidCourseText(data.shortDescription, 1000);
+    }
+
+    function isValidCreatedCourse(courseId) {
+      return isValidCourseData(courseId, request.resource.data)
+        && request.resource.data.status == "draft";
+    }
+
+    function isValidCreatedModule(courseId, moduleId) {
+      let coursePath = /databases/$(database)/documents/courses/$(courseId);
+      let data = request.resource.data;
+      return isValidCourseId(moduleId)
+        && exists(coursePath)
+        && isValidCourseData(courseId, get(coursePath).data)
+        && data.keys().hasAll(["title", "order"])
+        && data.keys().hasOnly(["title", "order"])
+        && isValidCourseText(data.title, 160)
+        && data.order is int
+        && data.order >= 0
+        && data.order <= 9007199254740991;
     }
 
     function isSessionVisible(sessionData) {
@@ -120,7 +138,10 @@ service cloud.firestore {
       allow update, delete: if false;
 
       match /modules/{moduleId} {
-        allow read: if canReadCourseContent(courseId);
+        allow get: if canReadCourseContent(courseId) || isOwner();
+        allow list: if canReadCourseContent(courseId);
+        allow create: if isOwner() && isValidCreatedModule(courseId, moduleId);
+        allow update, delete: if false;
 
         match /sessionDiscovery/{discoveryId} {
           allow get: if discoveryId == "visible"

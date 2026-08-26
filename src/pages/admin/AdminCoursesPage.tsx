@@ -3,13 +3,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { GlassCard } from "../../components/ui/Card";
-import { Input } from "../../components/ui/FormControls";
+import { Input, Select } from "../../components/ui/FormControls";
 import {
   AdminCourseCreationError,
   createAdminCourse,
 } from "../../features/admin/adminCourseCreation";
 import { buildAdminCourseDraft } from "../../features/admin/adminCourseCreationValidation";
 import { getAdminCourses } from "../../features/admin/adminCourseRepository";
+import {
+  AdminModuleCreationError,
+  createAdminModule,
+} from "../../features/admin/adminModuleCreation";
+import { buildAdminModuleCreation } from "../../features/admin/adminModuleCreationValidation";
 
 export function AdminCoursesPage() {
   const queryClient = useQueryClient();
@@ -19,6 +24,14 @@ export function AdminCoursesPage() {
   const [success, setSuccess] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<
     Partial<Record<"courseId" | "title" | "shortDescription", string>>
+  >({});
+  const [moduleCourseId, setModuleCourseId] = useState("");
+  const [moduleId, setModuleId] = useState("");
+  const [moduleTitle, setModuleTitle] = useState("");
+  const [moduleOrder, setModuleOrder] = useState("0");
+  const [moduleSuccess, setModuleSuccess] = useState(false);
+  const [moduleFieldErrors, setModuleFieldErrors] = useState<
+    Partial<Record<"courseId" | "moduleId" | "title" | "order", string>>
   >({});
   const courses = useQuery({
     queryKey: ["admin", "courses", "inventory"],
@@ -69,6 +82,62 @@ export function AdminCoursesPage() {
           service: "Unable to create the Course. Please try again.",
         }[creation.error.code]
       : "Unable to create the Course. Please try again."
+    : null;
+  const moduleCreation = useMutation({
+    mutationFn: createAdminModule,
+    onSuccess: () => {
+      setModuleId("");
+      setModuleTitle("");
+      setModuleOrder("0");
+      setModuleSuccess(true);
+    },
+  });
+  const submitModule = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (moduleCreation.isPending) return;
+    setModuleSuccess(false);
+    setModuleFieldErrors({});
+    try {
+      buildAdminModuleCreation({
+        courseId: moduleCourseId,
+        moduleId,
+        title: moduleTitle,
+        order: moduleOrder,
+      });
+    } catch (cause) {
+      if (
+        cause instanceof AdminModuleCreationError &&
+        cause.code === "validation" &&
+        cause.field
+      ) {
+        setModuleFieldErrors({
+          [cause.field]:
+            cause.field === "order"
+              ? "Enter a nonnegative whole number."
+              : cause.field === "title"
+                ? "Enter valid text without surrounding whitespace or control characters."
+                : "Select a Course and use a canonical Module ID.",
+        });
+        return;
+      }
+    }
+    moduleCreation.mutate({
+      courseId: moduleCourseId,
+      moduleId,
+      title: moduleTitle,
+      order: moduleOrder,
+    });
+  };
+  const moduleErrorMessage = moduleCreation.isError
+    ? moduleCreation.error instanceof AdminModuleCreationError
+      ? {
+          conflict:
+            "A Module with this ID already exists in the selected Course.",
+          validation: "Check the Course, Module ID, title, and order.",
+          unauthorized: "Owner authorization is required to create a Module.",
+          service: "Unable to create the Module. Please try again.",
+        }[moduleCreation.error.code]
+      : "Unable to create the Module. Please try again."
     : null;
   return (
     <section aria-labelledby="admin-courses-title">
@@ -129,6 +198,74 @@ export function AdminCoursesPage() {
         {success ? (
           <p className="mt-4 text-sm text-success" role="status">
             Course created as a draft.
+          </p>
+        ) : null}
+      </GlassCard>
+      <GlassCard className="mt-6 p-6">
+        <h3 className="text-lg font-bold text-text">Create Module</h3>
+        <p className="mt-1 text-sm text-text-muted">
+          Add a Module beneath an existing Course. This does not create
+          Sessions.
+        </p>
+        <form className="mt-5 grid gap-4" onSubmit={submitModule} noValidate>
+          <Select
+            label="Course"
+            value={moduleCourseId}
+            onChange={(event) => setModuleCourseId(event.target.value)}
+            disabled={moduleCreation.isPending || courses.isPending}
+            error={moduleFieldErrors.courseId}
+            required
+          >
+            <option value="">Select a Course</option>
+            {courses.data?.map((course) => (
+              <option key={course.id} value={course.id}>
+                {course.title} ({course.id})
+              </option>
+            ))}
+          </Select>
+          <Input
+            label="Module ID"
+            value={moduleId}
+            onChange={(event) => setModuleId(event.target.value)}
+            disabled={moduleCreation.isPending}
+            error={moduleFieldErrors.moduleId}
+            required
+            maxLength={128}
+            autoComplete="off"
+          />
+          <Input
+            label="Module Title"
+            value={moduleTitle}
+            onChange={(event) => setModuleTitle(event.target.value)}
+            disabled={moduleCreation.isPending}
+            error={moduleFieldErrors.title}
+            required
+          />
+          <Input
+            label="Order"
+            value={moduleOrder}
+            onChange={(event) => setModuleOrder(event.target.value)}
+            disabled={moduleCreation.isPending}
+            error={moduleFieldErrors.order}
+            required
+            inputMode="numeric"
+          />
+          <div>
+            <Button type="submit" isLoading={moduleCreation.isPending}>
+              {moduleCreation.isPending
+                ? "Creating Module..."
+                : "Create Module"}
+            </Button>
+          </div>
+        </form>
+        {moduleErrorMessage ? (
+          <p className="mt-4 text-sm text-danger" role="alert">
+            {moduleErrorMessage}
+          </p>
+        ) : null}
+        {moduleSuccess ? (
+          <p className="mt-4 text-sm text-success" role="status">
+            Module created successfully.
           </p>
         ) : null}
       </GlassCard>
