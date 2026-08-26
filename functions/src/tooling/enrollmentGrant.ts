@@ -110,7 +110,10 @@ export function resolveTrustedOwnerUid(
   return validateTargetUserId(environment[ENROLLMENT_GRANT_OWNER_UID_ENV]);
 }
 
-async function requireOwnerAuthority(auth: Auth, uid: string): Promise<void> {
+export async function requireOwnerAuthority(
+  auth: Auth,
+  uid: string,
+): Promise<void> {
   let user;
   try {
     user = await auth.getUser(uid);
