@@ -179,20 +179,82 @@ test("admin Course mapper returns exact data and rejects malformed documents", a
   }
 });
 
-test("admin frontend introduces no administrative write or privileged SDK API", async () => {
+test("Course creation builder derives only canonical slug and draft status", async () => {
+  const { buildAdminCourseDraft } = await import(
+    "../src/features/admin/adminCourseCreationValidation.ts"
+  );
+  assert.deepEqual(
+    buildAdminCourseDraft({
+      courseId: "quantum-mechanics",
+      title: "Quantum Mechanics",
+      shortDescription: "A rigorous introduction.",
+      status: "published",
+      slug: "forged",
+      path: "enrollments/target",
+    }),
+    {
+      courseId: "quantum-mechanics",
+      document: {
+        slug: "quantum-mechanics",
+        title: "Quantum Mechanics",
+        shortDescription: "A rigorous introduction.",
+        status: "draft",
+      },
+    },
+  );
+});
+
+test("Course creation validation rejects unsafe IDs and malformed trusted text", async () => {
+  const { buildAdminCourseDraft } = await import(
+    "../src/features/admin/adminCourseCreationValidation.ts"
+  );
+  for (const input of [
+    { courseId: "Unsafe", title: "Title", shortDescription: "Description" },
+    { courseId: "course", title: " Title", shortDescription: "Description" },
+    { courseId: "course", title: "Title", shortDescription: "Bad\u0000Description" },
+    { courseId: "course", title: "a".repeat(161), shortDescription: "Description" },
+  ]) {
+    assert.throws(() => buildAdminCourseDraft(input));
+  }
+});
+
+test("Course creation UI prevents duplicates, refreshes inventory, and sanitizes errors", async () => {
+  const page = await source("../src/pages/admin/AdminCoursesPage.tsx");
+  const repository = await source(
+    "../src/features/admin/adminCourseCreation.ts",
+  );
+  assert.match(page, /Create Course/);
+  assert.match(page, /creation\.isPending/);
+  assert.match(page, /error={fieldErrors\.courseId}/);
+  assert.match(page, /error={fieldErrors\.title}/);
+  assert.match(page, /error={fieldErrors\.shortDescription}/);
+  assert.match(page, /invalidateQueries/);
+  assert.match(page, /role="alert"/);
+  assert.match(page, /role="status"/);
+  assert.doesNotMatch(page, /error\.message|\.stack\b/);
+  assert.match(repository, /doc\(firebaseDb,\s*"courses",\s*proposal\.courseId\)/);
+  assert.match(repository, /runTransaction/);
+  assert.match(repository, /transaction\.get/);
+  assert.match(repository, /transaction\.set\(reference,\s*proposal\.document\)/);
+  assert.doesNotMatch(repository, /updateDoc|deleteDoc|addDoc|merge\s*:/);
+});
+
+test("admin frontend introduces no update, delete, random-ID, or privileged SDK API", async () => {
   const paths = [
     "../src/pages/admin/AdminLayout.tsx",
     "../src/pages/admin/AdminOverviewPage.tsx",
     "../src/pages/admin/AdminCoursesPage.tsx",
     "../src/features/admin/adminCourseRepository.ts",
     "../src/features/admin/adminCourseMapper.ts",
+    "../src/features/admin/adminCourseCreation.ts",
+    "../src/features/admin/adminCourseCreationValidation.ts",
     "../src/features/auth/AuthProvider.tsx",
     "../src/features/auth/AuthGuards.tsx",
   ];
   const combined = (await Promise.all(paths.map(source))).join("\n");
   assert.doesNotMatch(
     combined,
-    /\b(?:setDoc|updateDoc|addDoc|deleteDoc|writeBatch|runTransaction)\b/,
+    /\b(?:updateDoc|addDoc|deleteDoc|writeBatch)\b/,
   );
   assert.doesNotMatch(
     combined,

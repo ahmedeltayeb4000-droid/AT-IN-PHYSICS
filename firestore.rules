@@ -34,6 +34,40 @@ service cloud.firestore {
       return request.auth != null && request.auth.token.owner == true;
     }
 
+    function isValidCourseId(courseId) {
+      return courseId.size() <= 128
+        && courseId.matches("^[a-z0-9]+(-[a-z0-9]+)*$");
+    }
+
+    function isValidCourseText(value, maximum) {
+      return value is string
+        && value.size() > 0
+        && value.size() <= maximum
+        && value == value.trim()
+        && !value.matches(".*[\\x00-\\x1F\\x7F].*");
+    }
+
+    function isValidCreatedCourse(courseId) {
+      let data = request.resource.data;
+      return data.keys().hasAll([
+          "slug",
+          "title",
+          "shortDescription",
+          "status"
+        ])
+        && data.keys().hasOnly([
+          "slug",
+          "title",
+          "shortDescription",
+          "status"
+        ])
+        && isValidCourseId(courseId)
+        && data.slug == courseId
+        && data.status == "draft"
+        && isValidCourseText(data.title, 160)
+        && isValidCourseText(data.shortDescription, 1000);
+    }
+
     function isSessionVisible(sessionData) {
       return sessionData.keys().hasAll(["publicationStatus"])
         && sessionData.publicationStatus == "published"
@@ -82,6 +116,8 @@ service cloud.firestore {
 
     match /courses/{courseId} {
       allow read: if resource.data.status == "published" || isOwner();
+      allow create: if isOwner() && isValidCreatedCourse(courseId);
+      allow update, delete: if false;
 
       match /modules/{moduleId} {
         allow read: if canReadCourseContent(courseId);

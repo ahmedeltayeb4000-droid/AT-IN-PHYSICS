@@ -111,6 +111,28 @@ test("title and description lengths are bounded", () => {
   );
 });
 
+test("trusted text length matches the Firestore Rules astral-character boundary", () => {
+  const options = parseCourseCreationArgs([
+    "--course-id",
+    "unicode-course",
+    "--title",
+    "😀".repeat(80),
+    "--short-description",
+    "Description",
+  ]);
+  assert.equal(buildTrustedCourseDocument(options).title, "😀".repeat(80));
+  assert.throws(() =>
+    parseCourseCreationArgs([
+      "--course-id",
+      "unicode-course",
+      "--title",
+      "😀".repeat(81),
+      "--short-description",
+      "Description",
+    ]),
+  );
+});
+
 test("project guard approves only coherent production or emulator targets", () => {
   assert.equal(
     resolveCourseCreationProject({ GCLOUD_PROJECT: "at-in-physics" }),

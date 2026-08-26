@@ -85,6 +85,16 @@ function videoAccess(overrides = {}) {
   };
 }
 
+function courseDocument(courseId = "new-course", overrides = {}) {
+  return {
+    slug: courseId,
+    title: "New Course",
+    shortDescription: "A trusted draft Course.",
+    status: "draft",
+    ...overrides,
+  };
+}
+
 async function seedDocuments(fixtures) {
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
@@ -297,6 +307,97 @@ test("owner cannot create, update, or delete Course documents", async () => {
   await assertFails(setDoc(doc(ownerDb(), "courses/new-course"), { status: "draft" }));
   await assertFails(updateDoc(doc(ownerDb(), path), { status: "published" }));
   await assertFails(deleteDoc(doc(ownerDb(), path)));
+});
+
+test("only owner true can create an exact valid draft Course", async () => {
+  const path = "courses/new-course";
+  await assertFails(setDoc(doc(unauthenticatedDb(), path), courseDocument()));
+  await assertFails(setDoc(doc(authenticatedDb(CURRENT_UID), path), courseDocument()));
+  await assertFails(setDoc(doc(ownerDb(false), path), courseDocument()));
+  await assertSucceeds(setDoc(doc(ownerDb(), path), courseDocument()));
+  await assertSucceeds(getDoc(doc(ownerDb(), path)));
+  await assertFails(getDoc(doc(unauthenticatedDb(), path)));
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
+});
+
+test("Course create rejects status, slug, missing-field, and extra-field attacks", async () => {
+  const attempts = [
+    courseDocument("new-course", { status: "published" }),
+    courseDocument("new-course", { status: "other" }),
+    courseDocument("different-course"),
+    { slug: "new-course", title: "Title", status: "draft" },
+    courseDocument("new-course", { owner: true }),
+  ];
+  for (const data of attempts) {
+    await assertFails(setDoc(doc(ownerDb(), "courses/new-course"), data));
+  }
+});
+
+test("Course create enforces canonical ID and trusted text validation", async () => {
+  for (const courseId of [
+    "Unsafe",
+    "unsafe/path",
+    "-course",
+    "course-",
+    "course--two",
+    "a".repeat(129),
+  ]) {
+    await assertFails(
+      setDoc(doc(ownerDb(), `courses/${courseId.replace("/", "-")}`), courseDocument(courseId)),
+    );
+  }
+  for (const overrides of [
+    { title: "" },
+    { title: "   " },
+    { shortDescription: "" },
+    { shortDescription: "   " },
+    { title: " Leading" },
+    { title: "Trailing " },
+    { shortDescription: " Leading" },
+    { shortDescription: "Trailing " },
+    { title: "a".repeat(161) },
+    { shortDescription: "a".repeat(1001) },
+    { title: "Bad\u0000Title" },
+    { shortDescription: "Bad\u007fDescription" },
+  ]) {
+    await assertFails(
+      setDoc(doc(ownerDb(), "courses/new-course"), courseDocument("new-course", overrides)),
+    );
+  }
+});
+
+test("Course create length matches trusted UTF-16 astral-character boundaries", async () => {
+  await assertSucceeds(
+    setDoc(
+      doc(ownerDb(), "courses/unicode-course"),
+      courseDocument("unicode-course", { title: "😀".repeat(80) }),
+    ),
+  );
+  await assertFails(
+    setDoc(
+      doc(ownerDb(), "courses/unicode-course-too-long"),
+      courseDocument("unicode-course-too-long", { title: "😀".repeat(81) }),
+    ),
+  );
+});
+
+test("an existing Course cannot be overwritten through create or update", async () => {
+  const path = "courses/existing-course";
+  await seedDocuments({ [path]: courseDocument("existing-course") });
+  await assertFails(setDoc(doc(ownerDb(), path), courseDocument("existing-course", { title: "Changed" })));
+});
+
+test("Course create authority does not grant writes to adjacent resources", async () => {
+  const writes = [
+    ["courses/course/modules/module", { title: "Module", order: 0 }],
+    ["courses/course/modules/module/sessions/session", { title: "Session", order: 0 }],
+    ["courses/course/modules/module/sessionDiscovery/visible", { sessionIds: [] }],
+    ["courses/course/modules/module/sessions/session/videoAccess/primary", videoAccess()],
+    ["enrollments/trusted-owner_course", enrollment("trusted-owner", "course")],
+  ];
+  for (const [path, data] of writes) {
+    await assertFails(setDoc(doc(ownerDb(), path), data));
+  }
 });
 
 test("owner claim grants no additional Module, Session, or videoAccess privilege", async () => {
