@@ -49,14 +49,22 @@ function optionValue(
   return value;
 }
 
-function validateText(name: string, value: unknown, maximum: number): string {
+export function validateTrustedContentText(
+  name: string,
+  value: unknown,
+  maximum: number,
+): string {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error(`${name} must be a non-empty string.`);
   }
   if (value !== value.trim()) {
     throw new Error(`${name} must not contain leading or trailing whitespace.`);
   }
-  if (value.length > maximum || /[\u0000-\u001f\u007f]/.test(value)) {
+  const hasControlCharacter = [...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint < 32 || codePoint === 127;
+  });
+  if (value.length > maximum || hasControlCharacter) {
     throw new Error(`${name} is invalid or exceeds ${maximum} characters.`);
   }
   return value;
@@ -94,8 +102,8 @@ export function parseCourseCreationArgs(
   }
   return {
     courseId: validateCourseId(courseId),
-    title: validateText("title", title, TITLE_MAX_LENGTH),
-    shortDescription: validateText(
+    title: validateTrustedContentText("title", title, TITLE_MAX_LENGTH),
+    shortDescription: validateTrustedContentText(
       "shortDescription",
       shortDescription,
       DESCRIPTION_MAX_LENGTH,
@@ -114,14 +122,52 @@ export function buildTrustedCourseDocument(
   const courseId = validateCourseId(options.courseId);
   return {
     slug: courseId,
-    title: validateText("title", options.title, TITLE_MAX_LENGTH),
-    shortDescription: validateText(
+    title: validateTrustedContentText("title", options.title, TITLE_MAX_LENGTH),
+    shortDescription: validateTrustedContentText(
       "shortDescription",
       options.shortDescription,
       DESCRIPTION_MAX_LENGTH,
     ),
     status: "draft",
   };
+}
+
+export function validateTrustedCourseDocument(
+  value: unknown,
+  courseId: string,
+): asserts value is Readonly<{
+  slug: string;
+  title: string;
+  shortDescription: string;
+  status: "draft" | "published";
+}> {
+  const id = validateCourseId(courseId);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Parent Course is malformed.");
+  }
+  const data = value as Record<string, unknown>;
+  if (
+    !isDeepStrictEqual(Object.keys(data).sort(), [
+      "shortDescription",
+      "slug",
+      "status",
+      "title",
+    ]) ||
+    data.slug !== id ||
+    (data.status !== "draft" && data.status !== "published")
+  ) {
+    throw new Error("Parent Course is malformed.");
+  }
+  try {
+    validateTrustedContentText("title", data.title, TITLE_MAX_LENGTH);
+    validateTrustedContentText(
+      "shortDescription",
+      data.shortDescription,
+      DESCRIPTION_MAX_LENGTH,
+    );
+  } catch (cause) {
+    throw new Error("Parent Course is malformed.", { cause });
+  }
 }
 
 function inspectExisting(

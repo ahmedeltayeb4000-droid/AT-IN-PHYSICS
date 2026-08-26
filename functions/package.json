@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test lib/test/smoke.test.js lib/test/ownerBootstrap.test.js lib/test/enrollmentValidation.test.js lib/test/enrollmentGrantCli.test.js lib/test/courseCreation.test.js lib/test/sessionDiscovery.test.js lib/test/sessionDiscoveryMigration.test.js lib/test/lessonContentPublication.test.js lib/test/videoPackaging.test.js lib/test/videoPublication.test.js lib/test/videoDescriptorPublication.test.js lib/test/videoHostingPreparation.test.js",
+    "test": "npm run build && node --test lib/test/smoke.test.js lib/test/ownerBootstrap.test.js lib/test/enrollmentValidation.test.js lib/test/enrollmentGrantCli.test.js lib/test/courseCreation.test.js lib/test/moduleCreation.test.js lib/test/sessionDiscovery.test.js lib/test/sessionDiscoveryMigration.test.js lib/test/lessonContentPublication.test.js lib/test/videoPackaging.test.js lib/test/videoPublication.test.js lib/test/videoDescriptorPublication.test.js lib/test/videoHostingPreparation.test.js",
     "test:integration": "node --test lib/test/grantEnrollment.integration.test.js",
     "test:enrollment-grant-cli": "npm run build && node --test lib/test/enrollmentGrantCli.test.js",
     "test:enrollment-grant-cli:integration": "node --test lib/test/enrollmentGrantCli.integration.test.js",
@@ -29,7 +29,10 @@
     "video:hosting:prepare": "npm run build && node lib/src/tooling/videoHostingPreparationCli.js",
     "course:create": "npm run build && node lib/src/tooling/courseCreationCli.js",
     "test:course-creation": "npm run build && node --test lib/test/courseCreation.test.js",
-    "test:course-creation:integration": "node --test lib/test/courseCreation.integration.test.js"
+    "test:course-creation:integration": "node --test lib/test/courseCreation.integration.test.js",
+    "module:create": "npm run build && node lib/src/tooling/moduleCreationCli.js",
+    "test:module-creation": "npm run build && node --test lib/test/moduleCreation.test.js",
+    "test:module-creation:integration": "node --test lib/test/moduleCreation.integration.test.js"
   },
   "dependencies": {
     "firebase-admin": "^14.3.0",
