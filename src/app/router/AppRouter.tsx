@@ -11,7 +11,14 @@ import { ResetPasswordPage } from "../../pages/auth/ResetPasswordPage";
 import { DashboardPage } from "../../pages/dashboard/DashboardPage";
 import { SplashScreen } from "../../pages/splash/SplashScreen";
 import { NotFoundPage } from "../../pages/not-found/NotFoundPage";
-import { AuthGuard, PublicOnlyRoute } from "../../features/auth/AuthGuards";
+import {
+  AuthGuard,
+  OwnerGuard,
+  PublicOnlyRoute,
+} from "../../features/auth/AuthGuards";
+import { AdminLayout } from "../../pages/admin/AdminLayout";
+import { AdminOverviewPage } from "../../pages/admin/AdminOverviewPage";
+import { AdminCoursesPage } from "../../pages/admin/AdminCoursesPage";
 
 export function AppRouter() {
   return (
@@ -69,6 +76,17 @@ export function AppRouter() {
               </AuthGuard>
             }
           />
+          <Route
+            path="admin"
+            element={
+              <OwnerGuard>
+                <AdminLayout />
+              </OwnerGuard>
+            }
+          >
+            <Route index element={<AdminOverviewPage />} />
+            <Route path="courses" element={<AdminCoursesPage />} />
+          </Route>
         </Route>
         <Route path="/splash" element={<SplashScreen />} />
         <Route path="*" element={<NotFoundPage />} />

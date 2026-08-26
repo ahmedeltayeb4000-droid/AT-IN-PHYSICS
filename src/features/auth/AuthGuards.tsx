@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./AuthContext";
+import { resolveOwnerAccessState } from "./ownerAccess";
 
 export function AuthGuard({ children }: { children: ReactElement }) {
   const { user, loading } = useAuth();
@@ -14,6 +15,33 @@ export function AuthGuard({ children }: { children: ReactElement }) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
+  return children;
+}
+
+export function OwnerGuard({ children }: { children: ReactElement }) {
+  const { user, loading, claimsLoading, isOwner } = useAuth();
+  const location = useLocation();
+  const state = resolveOwnerAccessState({
+    authLoading: loading,
+    claimsLoading,
+    authenticated: user !== null,
+    isOwner,
+  });
+
+  if (state === "loading") {
+    return (
+      <div
+        className="grid min-h-64 place-items-center text-sm text-text-muted"
+        role="status"
+      >
+        Verifying owner access...
+      </div>
+    );
+  }
+  if (state === "unauthenticated") {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+  if (state === "denied") return <Navigate to="/dashboard" replace />;
   return children;
 }
 

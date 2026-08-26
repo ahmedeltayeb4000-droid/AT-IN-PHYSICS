@@ -6,7 +6,7 @@ import { useAuth } from "../features/auth/AuthContext";
 import { firebaseAuth } from "../lib/firebase";
 
 export function AppLayout() {
-  const { user, loading } = useAuth();
+  const { user, loading, claimsLoading, isOwner } = useAuth();
   const navigate = useNavigate();
   const [isSigningOut, setIsSigningOut] = useState(false);
 
@@ -26,15 +26,30 @@ export function AppLayout() {
     <div className="min-h-screen bg-canvas text-text">
       <nav className="border-b border-border bg-panel/50 backdrop-blur-md sticky top-0 z-50">
         <PageContainer className="flex items-center justify-between h-16">
-          <Link to="/" className="text-xl font-bold text-accent">A.T IN PHYSICS</Link>
-          
+          <Link to="/" className="text-xl font-bold text-accent">
+            A.T IN PHYSICS
+          </Link>
+
           <div className="flex items-center gap-6">
-            <Link to="/" className="text-sm font-medium hover:text-accent">Home</Link>
+            <Link to="/" className="text-sm font-medium hover:text-accent">
+              Home
+            </Link>
             {!loading && user && (
               <>
-                <Link to="/dashboard" className="text-sm font-medium hover:text-accent">
+                <Link
+                  to="/dashboard"
+                  className="text-sm font-medium hover:text-accent"
+                >
                   Dashboard
                 </Link>
+                {!claimsLoading && isOwner ? (
+                  <Link
+                    to="/admin"
+                    className="text-sm font-medium hover:text-accent"
+                  >
+                    Master Control Room
+                  </Link>
+                ) : null}
                 <button
                   type="button"
                   onClick={handleSignOut}
@@ -46,14 +61,17 @@ export function AppLayout() {
               </>
             )}
             {!loading && !user && (
-              <Link to="/login" className="text-sm font-bold bg-accent text-white px-4 py-2 rounded-lg">
+              <Link
+                to="/login"
+                className="text-sm font-bold bg-accent text-white px-4 py-2 rounded-lg"
+              >
                 Sign In
               </Link>
             )}
           </div>
         </PageContainer>
       </nav>
-      
+
       <main>
         <Outlet />
       </main>

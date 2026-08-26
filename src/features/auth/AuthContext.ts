@@ -4,6 +4,8 @@ import type { User } from "firebase/auth";
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
+  claimsLoading: boolean;
+  isOwner: boolean;
 };
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
