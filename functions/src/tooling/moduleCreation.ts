@@ -128,6 +128,24 @@ export function buildTrustedModuleDocument(
   };
 }
 
+export function validateTrustedModuleDocument(
+  value: unknown,
+): asserts value is TrustedModuleDocument {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Parent Module is malformed.");
+  }
+  const data = value as Record<string, unknown>;
+  if (!isDeepStrictEqual(Object.keys(data).sort(), ["order", "title"])) {
+    throw new Error("Parent Module is malformed.");
+  }
+  try {
+    validateTrustedContentText("title", data.title, MODULE_TITLE_MAX_LENGTH);
+    validateModuleOrder(data.order);
+  } catch (cause) {
+    throw new Error("Parent Module is malformed.", { cause });
+  }
+}
+
 export function inspectExistingModule(
   data: DocumentData | undefined,
   expected: TrustedModuleDocument,
