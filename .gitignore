@@ -20,6 +20,8 @@ functions/node_modules
 /hosting-release.tmp-*/
 /hosting-deploy-preflight/
 /hosting-deploy-preflight.tmp-*/
+/test-results/
+/playwright-report/
 
 # Editor directories and files
 .vscode/*
