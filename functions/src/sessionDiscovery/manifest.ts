@@ -124,3 +124,29 @@ export function sessionDiscoveryManifestsEqual(
     )
   );
 }
+
+export function validateSessionDiscoveryManifest(
+  value: unknown,
+): SessionDiscoveryManifest {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error("Existing Session discovery manifest is malformed.");
+  }
+  const data = value as Record<string, unknown>;
+  if (Object.keys(data).length !== 1 || !Array.isArray(data.sessionIds)) {
+    throw new Error("Existing Session discovery manifest is malformed.");
+  }
+  let sessionIds: string[];
+  try {
+    sessionIds = data.sessionIds.map((id) =>
+      validateContentId("sessionId", id),
+    );
+  } catch (cause) {
+    throw new Error("Existing Session discovery manifest is malformed.", {
+      cause,
+    });
+  }
+  if (new Set(sessionIds).size !== sessionIds.length) {
+    throw new Error("Existing Session discovery manifest is malformed.");
+  }
+  return { sessionIds };
+}
