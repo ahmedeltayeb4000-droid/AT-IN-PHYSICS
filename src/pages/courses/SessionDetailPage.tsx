@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { PageContainer, Section } from "../../components/layout/Primitives";
@@ -17,6 +17,7 @@ import { hasCourseEntitlement } from "../../features/enrollments/entitlement";
 import type { Enrollment } from "../../features/enrollments/types";
 import { useMyEnrollments } from "../../features/enrollments/useMyEnrollments";
 import { SessionVideoPlayer } from "../../features/video/SessionVideoPlayer";
+import type { VideoWatermarkPolicy } from "../../features/video/watermark";
 
 function StatusPanel({
   title,
@@ -123,6 +124,16 @@ function getUnentitledCopy(
 export function SessionDetailPage() {
   const params = parseSessionDetailRouteParams(useParams());
   const { user, loading: authLoading } = useAuth();
+  const protectedWatermark = useMemo<VideoWatermarkPolicy>(
+    () =>
+      user
+        ? {
+            mode: "protected",
+            viewer: { uid: user.uid, email: user.email },
+          }
+        : { mode: "none" },
+    [user],
+  );
   const enrollmentsQuery = useMyEnrollments();
   const [evaluatedAt] = useState(() => new Date());
   const courseQuery = useQuery({
@@ -290,7 +301,10 @@ export function SessionDetailPage() {
               </h1>
               <p className="mt-3 text-text-muted">{course.title}</p>
               {session.videoAssetId ? (
-                <SessionVideoPlayer session={session} />
+                <SessionVideoPlayer
+                  session={session}
+                  watermark={protectedWatermark}
+                />
               ) : null}
               <div className="mt-10 rounded-xl border border-white/10 bg-white/[.03] p-6">
                 <h2 className="text-xl font-bold text-text">Lesson content</h2>

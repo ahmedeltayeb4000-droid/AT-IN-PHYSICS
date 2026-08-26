@@ -17,6 +17,14 @@ import {
 } from "../src/features/video/encryptedMediaRepository.ts";
 import { loadSessionVideo } from "../src/features/video/videoPlayback.ts";
 import { encryptVideoBytes } from "../functions/src/videoPackaging/crypto.ts";
+import {
+  buildProtectedWatermarkLines,
+  maskViewerEmail,
+  nextWatermarkPosition,
+  startWatermarkPositionCycle,
+  WATERMARK_POSITIONS,
+  WATERMARK_POSITION_INTERVAL_MS,
+} from "../src/features/video/watermark.ts";
 
 const MAGIC = new TextEncoder().encode("ATV1");
 const KEY = Uint8Array.from({ length: 32 }, (_, index) => index);
@@ -210,4 +218,116 @@ test("changed playback code introduces no persistence, browser writes, or arbitr
   const source = (await Promise.all(files.map((file) => readFile(new URL(file, import.meta.url), "utf8")))).join("\n");
   assert.doesNotMatch(source, /\b(?:localStorage|sessionStorage|indexedDB|setDoc|updateDoc|addDoc|deleteDoc)\b/);
   assert.doesNotMatch(source, /https?:\/\//);
+});
+
+test("protected playback derives a privacy-reduced authenticated viewer watermark", async () => {
+  const email = "alice.student@example.com";
+  const uid = "firebase-user-credential-that-must-not-be-rendered";
+  const lines = await buildProtectedWatermarkLines(
+    { uid, email },
+    webcrypto.subtle,
+  );
+  assert.deepEqual(lines, ["A.T IN PHYSICS", "a***t@e***e.com"]);
+  assert.equal(lines.join(" ").includes(email), false);
+  assert.equal(lines.join(" ").includes(uid), false);
+  assert.equal(maskViewerEmail("invalid"), null);
+
+  const fallback = await buildProtectedWatermarkLines(
+    { uid, email: null },
+    webcrypto.subtle,
+  );
+  assert.match(fallback[1], /^Viewer [0-9a-f]{12}$/);
+  assert.equal(fallback.join(" ").includes(uid), false);
+});
+
+test("watermark position cycle stays in its predefined bounded set", () => {
+  let current = 0;
+  const visited = new Set([current]);
+  for (let index = 0; index < WATERMARK_POSITIONS.length * 2; index += 1) {
+    current = nextWatermarkPosition(current);
+    visited.add(current);
+  }
+  assert.deepEqual([...visited].sort(), WATERMARK_POSITIONS.map((_, index) => index));
+  assert.equal(nextWatermarkPosition(-1), 0);
+  assert.equal(nextWatermarkPosition(WATERMARK_POSITIONS.length), 0);
+  assert.equal(WATERMARK_POSITIONS.every((classes) => !/bottom-(?:0|1|2|3|4)\b/.test(classes)), true);
+});
+
+test("watermark timer uses the approved interval, cleans up, and reduced motion creates no timer", () => {
+  let callback;
+  let delay;
+  const cleared = [];
+  let advances = 0;
+  const timers = {
+    setInterval(next, nextDelay) {
+      callback = next;
+      delay = nextDelay;
+      return "timer-id";
+    },
+    clearInterval(timer) {
+      cleared.push(timer);
+    },
+  };
+  const cleanup = startWatermarkPositionCycle(() => { advances += 1; }, false, timers);
+  assert.equal(delay, WATERMARK_POSITION_INTERVAL_MS);
+  callback();
+  assert.equal(advances, 1);
+  cleanup();
+  assert.deepEqual(cleared, ["timer-id"]);
+
+  let reducedTimerCreated = false;
+  const reducedCleanup = startWatermarkPositionCycle(() => {}, true, {
+    setInterval() { reducedTimerCreated = true; },
+    clearInterval() {},
+  });
+  reducedCleanup();
+  assert.equal(reducedTimerCreated, false);
+});
+
+test("fullscreen contains video and watermark with accessible wrapper control and lifecycle cleanup", async () => {
+  const source = await readFile(
+    new URL("../src/features/video/SessionVideoPlayer.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /ref=\{wrapperRef\}/);
+  assert.match(source, /wrapper\.requestFullscreen\(\)/);
+  assert.match(source, /document\.exitFullscreen\(\)/);
+  assert.match(source, /aria-label=\{isFullscreen/);
+  assert.match(source, /aria-pressed=\{isFullscreen\}/);
+  assert.match(source, /addEventListener\("fullscreenchange", update\)/);
+  assert.match(source, /removeEventListener\("fullscreenchange", update\)/);
+  assert.match(source, /pointer-events-none/);
+  assert.match(source, /controlsList="nodownload nofullscreen"/);
+});
+
+test("watermark policy is protected-playback scoped and future public playback can opt out", async () => {
+  const watermarkSource = await readFile(
+    new URL("../src/features/video/watermark.ts", import.meta.url),
+    "utf8",
+  );
+  const playerSource = await readFile(
+    new URL("../src/features/video/SessionVideoPlayer.tsx", import.meta.url),
+    "utf8",
+  );
+  const pageSource = await readFile(
+    new URL("../src/pages/courses/SessionDetailPage.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(watermarkSource, /mode: "protected"/);
+  assert.match(watermarkSource, /mode: "none"/);
+  assert.match(playerSource, /watermark\.mode === "protected"/);
+  assert.match(pageSource, /mode: "protected"/);
+});
+
+test("watermark additions expose no forbidden viewer secrets or logging", async () => {
+  const files = [
+    "../src/features/video/watermark.ts",
+    "../src/features/video/SessionVideoPlayer.tsx",
+    "../src/pages/courses/SessionDetailPage.tsx",
+  ];
+  const source = (await Promise.all(files.map((file) =>
+    readFile(new URL(file, import.meta.url), "utf8"),
+  ))).join("\n");
+  assert.doesNotMatch(source, /\b(?:accessCode|enrollmentId|password|idToken|refreshToken)\b/);
+  assert.doesNotMatch(source, /console\.(?:log|error|warn|info)/);
 });
