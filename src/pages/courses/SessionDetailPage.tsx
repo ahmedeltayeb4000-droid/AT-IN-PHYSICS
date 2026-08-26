@@ -16,6 +16,7 @@ import {
 import { hasCourseEntitlement } from "../../features/enrollments/entitlement";
 import type { Enrollment } from "../../features/enrollments/types";
 import { useMyEnrollments } from "../../features/enrollments/useMyEnrollments";
+import { SessionVideoPlayer } from "../../features/video/SessionVideoPlayer";
 
 function StatusPanel({
   title,
@@ -288,6 +289,9 @@ export function SessionDetailPage() {
                 {session.title}
               </h1>
               <p className="mt-3 text-text-muted">{course.title}</p>
+              {session.videoAssetId ? (
+                <SessionVideoPlayer session={session} />
+              ) : null}
               <div className="mt-10 rounded-xl border border-white/10 bg-white/[.03] p-6">
                 <h2 className="text-xl font-bold text-text">Lesson content</h2>
                 {session.lessonText ? (
