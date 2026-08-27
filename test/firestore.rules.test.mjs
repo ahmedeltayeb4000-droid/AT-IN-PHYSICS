@@ -99,7 +99,9 @@ async function seedDocuments(fixtures) {
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     await Promise.all(
-      Object.entries(fixtures).map(([path, data]) => setDoc(doc(db, path), data)),
+      Object.entries(fixtures).map(([path, data]) =>
+        setDoc(doc(db, path), data),
+      ),
     );
   });
 }
@@ -120,7 +122,10 @@ function unauthenticatedDb() {
 
 before(async () => {
   const { host, port } = emulatorConfiguration();
-  const rules = await readFile(new URL("../firestore.rules", import.meta.url), "utf8");
+  const rules = await readFile(
+    new URL("../firestore.rules", import.meta.url),
+    "utf8",
+  );
   testEnvironment = await initializeTestEnvironment({
     projectId: PROJECT_ID,
     firestore: { host, port, rules },
@@ -149,7 +154,9 @@ test("authenticated student can get their own Enrollment", async () => {
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
   });
   const snapshot = await assertSucceeds(
-    getDoc(doc(authenticatedDb(CURRENT_UID), `enrollments/${CURRENT_UID}_mechanics`)),
+    getDoc(
+      doc(authenticatedDb(CURRENT_UID), `enrollments/${CURRENT_UID}_mechanics`),
+    ),
   );
   assert.equal(snapshot.exists(), true);
 });
@@ -159,7 +166,9 @@ test("authenticated student cannot get another student's Enrollment", async () =
     [`enrollments/${OTHER_UID}_mechanics`]: enrollment(OTHER_UID),
   });
   await assertFails(
-    getDoc(doc(authenticatedDb(CURRENT_UID), `enrollments/${OTHER_UID}_mechanics`)),
+    getDoc(
+      doc(authenticatedDb(CURRENT_UID), `enrollments/${OTHER_UID}_mechanics`),
+    ),
   );
 });
 
@@ -201,7 +210,9 @@ test("spoofed deterministic ID does not override stored userId ownership", async
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(OTHER_UID),
   });
   await assertFails(
-    getDoc(doc(authenticatedDb(CURRENT_UID), `enrollments/${CURRENT_UID}_mechanics`)),
+    getDoc(
+      doc(authenticatedDb(CURRENT_UID), `enrollments/${CURRENT_UID}_mechanics`),
+    ),
   );
 });
 
@@ -233,7 +244,9 @@ test("authenticated student cannot update Enrollment authority fields", async ()
     { courseId: "other-course" },
     { userId: OTHER_UID },
   ]) {
-    await assertFails(updateDoc(doc(authenticatedDb(CURRENT_UID), path), change));
+    await assertFails(
+      updateDoc(doc(authenticatedDb(CURRENT_UID), path), change),
+    );
   }
 });
 
@@ -270,7 +283,9 @@ test("authenticated non-owner and missing or false owner claims cannot read a dr
   await seedDocuments({
     "courses/draft-course": { status: "draft", title: "Draft" },
   });
-  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), "courses/draft-course")));
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), "courses/draft-course")),
+  );
   await assertFails(getDoc(doc(ownerDb(false), "courses/draft-course")));
 });
 
@@ -280,7 +295,9 @@ test("owner claim reads draft Course and lists draft plus published inventory", 
     "courses/published-course": { status: "published", title: "Published" },
   });
   await assertSucceeds(getDoc(doc(ownerDb(), "courses/draft-course")));
-  const snapshot = await assertSucceeds(getDocs(collection(ownerDb(), "courses")));
+  const snapshot = await assertSucceeds(
+    getDocs(collection(ownerDb(), "courses")),
+  );
   assert.deepEqual(snapshot.docs.map(({ id }) => id).sort(), [
     "draft-course",
     "published-course",
@@ -297,14 +314,21 @@ test("non-owner Course listing remains constrained to published documents", asyn
     where("status", "==", "published"),
   );
   const snapshot = await assertSucceeds(getDocs(publishedQuery));
-  assert.deepEqual(snapshot.docs.map(({ id }) => id), ["published-course"]);
-  await assertFails(getDocs(collection(authenticatedDb(CURRENT_UID), "courses")));
+  assert.deepEqual(
+    snapshot.docs.map(({ id }) => id),
+    ["published-course"],
+  );
+  await assertFails(
+    getDocs(collection(authenticatedDb(CURRENT_UID), "courses")),
+  );
 });
 
 test("owner cannot create, update, or delete Course documents", async () => {
   const path = "courses/draft-course";
   await seedDocuments({ [path]: { status: "draft", title: "Draft" } });
-  await assertFails(setDoc(doc(ownerDb(), "courses/new-course"), { status: "draft" }));
+  await assertFails(
+    setDoc(doc(ownerDb(), "courses/new-course"), { status: "draft" }),
+  );
   await assertFails(updateDoc(doc(ownerDb(), path), { status: "published" }));
   await assertFails(deleteDoc(doc(ownerDb(), path)));
 });
@@ -312,7 +336,9 @@ test("owner cannot create, update, or delete Course documents", async () => {
 test("only owner true can create an exact valid draft Course", async () => {
   const path = "courses/new-course";
   await assertFails(setDoc(doc(unauthenticatedDb(), path), courseDocument()));
-  await assertFails(setDoc(doc(authenticatedDb(CURRENT_UID), path), courseDocument()));
+  await assertFails(
+    setDoc(doc(authenticatedDb(CURRENT_UID), path), courseDocument()),
+  );
   await assertFails(setDoc(doc(ownerDb(false), path), courseDocument()));
   await assertSucceeds(setDoc(doc(ownerDb(), path), courseDocument()));
   await assertSucceeds(getDoc(doc(ownerDb(), path)));
@@ -343,7 +369,10 @@ test("Course create enforces canonical ID and trusted text validation", async ()
     "a".repeat(129),
   ]) {
     await assertFails(
-      setDoc(doc(ownerDb(), `courses/${courseId.replace("/", "-")}`), courseDocument(courseId)),
+      setDoc(
+        doc(ownerDb(), `courses/${courseId.replace("/", "-")}`),
+        courseDocument(courseId),
+      ),
     );
   }
   for (const overrides of [
@@ -361,7 +390,10 @@ test("Course create enforces canonical ID and trusted text validation", async ()
     { shortDescription: "Bad\u007fDescription" },
   ]) {
     await assertFails(
-      setDoc(doc(ownerDb(), "courses/new-course"), courseDocument("new-course", overrides)),
+      setDoc(
+        doc(ownerDb(), "courses/new-course"),
+        courseDocument("new-course", overrides),
+      ),
     );
   }
 });
@@ -384,15 +416,29 @@ test("Course create length matches trusted UTF-16 astral-character boundaries", 
 test("an existing Course cannot be overwritten through create or update", async () => {
   const path = "courses/existing-course";
   await seedDocuments({ [path]: courseDocument("existing-course") });
-  await assertFails(setDoc(doc(ownerDb(), path), courseDocument("existing-course", { title: "Changed" })));
+  await assertFails(
+    setDoc(
+      doc(ownerDb(), path),
+      courseDocument("existing-course", { title: "Changed" }),
+    ),
+  );
 });
 
 test("Course create authority does not grant writes to adjacent resources", async () => {
   const writes = [
     ["courses/course/modules/module", { title: "Module", order: 0 }],
-    ["courses/course/modules/module/sessions/session", { title: "Session", order: 0 }],
-    ["courses/course/modules/module/sessionDiscovery/visible", { sessionIds: [] }],
-    ["courses/course/modules/module/sessions/session/videoAccess/primary", videoAccess()],
+    [
+      "courses/course/modules/module/sessions/session",
+      { title: "Session", order: 0 },
+    ],
+    [
+      "courses/course/modules/module/sessionDiscovery/visible",
+      { sessionIds: [] },
+    ],
+    [
+      "courses/course/modules/module/sessions/session/videoAccess/primary",
+      videoAccess(),
+    ],
     ["enrollments/trusted-owner_course", enrollment("trusted-owner", "course")],
   ];
   for (const [path, data] of writes) {
@@ -414,7 +460,10 @@ test("owner creates an exact Module only beneath a valid existing Course", async
     const modules = await getDocs(
       collection(context.firestore(), "courses/module-course/modules"),
     );
-    assert.deepEqual(modules.docs.map(({ id }) => id), ["motion"]);
+    assert.deepEqual(
+      modules.docs.map(({ id }) => id),
+      ["motion"],
+    );
   });
 });
 
@@ -428,13 +477,25 @@ test("Module create requires owner true and a valid parent Course", async () => 
   });
   const data = { title: "Motion", order: 0 };
   await assertFails(
-    setDoc(doc(unauthenticatedDb(), "courses/module-course/modules/unauth"), data),
+    setDoc(
+      doc(unauthenticatedDb(), "courses/module-course/modules/unauth"),
+      data,
+    ),
   );
   await assertFails(
-    setDoc(doc(authenticatedDb(CURRENT_UID), "courses/module-course/modules/student"), data),
+    setDoc(
+      doc(
+        authenticatedDb(CURRENT_UID),
+        "courses/module-course/modules/student",
+      ),
+      data,
+    ),
   );
   await assertFails(
-    setDoc(doc(ownerDb(false), "courses/module-course/modules/false-owner"), data),
+    setDoc(
+      doc(ownerDb(false), "courses/module-course/modules/false-owner"),
+      data,
+    ),
   );
   await assertFails(
     setDoc(doc(ownerDb(), "courses/missing-course/modules/orphan"), data),
@@ -488,16 +549,20 @@ test("Module create rejects ID, schema, title, order, and path manipulation", as
   });
 });
 
-test("owner Module creation is create-only and owner listing remains denied", async () => {
+test("owner Module writes remain create-only while inventory listing succeeds", async () => {
   const path = "courses/module-course/modules/existing";
   await seedDocuments({
     "courses/module-course": courseDocument("module-course"),
     [path]: { title: "Existing", order: 0 },
   });
-  await assertFails(setDoc(doc(ownerDb(), path), { title: "Changed", order: 1 }));
+  await assertFails(
+    setDoc(doc(ownerDb(), path), { title: "Changed", order: 1 }),
+  );
   await assertFails(updateDoc(doc(ownerDb(), path), { order: 1 }));
   await assertFails(deleteDoc(doc(ownerDb(), path)));
-  await assertFails(getDocs(collection(ownerDb(), "courses/module-course/modules")));
+  await assertSucceeds(
+    getDocs(collection(ownerDb(), "courses/module-course/modules")),
+  );
 });
 
 test("owner exact Module get grants no Session or videoAccess privilege", async () => {
@@ -844,9 +909,107 @@ test("active Enrollment allows exact-Course Module list query", async () => {
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
   });
   const snapshot = await assertSucceeds(
-    getDocs(collection(authenticatedDb(CURRENT_UID), "courses/mechanics/modules")),
+    getDocs(
+      collection(authenticatedDb(CURRENT_UID), "courses/mechanics/modules"),
+    ),
   );
   assert.equal(snapshot.size, 2);
+});
+
+test("owner lists multiple Modules beneath published and draft Courses", async () => {
+  await seedDocuments({
+    "courses/published-course": courseDocument("published-course", {
+      status: "published",
+    }),
+    "courses/published-course/modules/second": { title: "Second", order: 2 },
+    "courses/published-course/modules/first": { title: "First", order: 1 },
+    "courses/draft-course": courseDocument("draft-course"),
+    "courses/draft-course/modules/draft-module": {
+      title: "Draft Module",
+      order: 0,
+    },
+  });
+  const owner = ownerDb();
+  const published = await assertSucceeds(
+    getDocs(collection(owner, "courses/published-course/modules")),
+  );
+  const draft = await assertSucceeds(
+    getDocs(collection(owner, "courses/draft-course/modules")),
+  );
+  assert.equal(published.size, 2);
+  assert.equal(draft.size, 1);
+  await assertSucceeds(
+    getDoc(doc(owner, "courses/draft-course/modules/draft-module")),
+  );
+});
+
+test("Module list remains denied without owner true or active Enrollment", async () => {
+  const modulesPath = "courses/draft-course/modules";
+  await seedDocuments({
+    "courses/draft-course": courseDocument("draft-course"),
+    [`${modulesPath}/module`]: { title: "Module", order: 0 },
+  });
+  await assertFails(getDocs(collection(unauthenticatedDb(), modulesPath)));
+  await assertFails(
+    getDocs(collection(authenticatedDb(CURRENT_UID), modulesPath)),
+  );
+  await assertFails(getDocs(collection(ownerDb(false), modulesPath)));
+});
+
+test("expired and revoked Enrollments retain Module-list denial", async () => {
+  const modulesPath = "courses/mechanics/modules";
+  await seedDocuments({
+    [`${modulesPath}/motion`]: { title: "Motion", order: 0 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { expiresAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")) },
+    ),
+  });
+  await assertFails(
+    getDocs(collection(authenticatedDb(CURRENT_UID), modulesPath)),
+  );
+  await seedDocuments({
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      { status: "revoked" },
+    ),
+  });
+  await assertFails(
+    getDocs(collection(authenticatedDb(CURRENT_UID), modulesPath)),
+  );
+});
+
+test("owner Module inventory permission is isolated from nested and Enrollment reads", async () => {
+  const modulePath = "courses/mechanics/modules/motion";
+  const sessionPath = `${modulePath}/sessions/introduction`;
+  const discoveryPath = `${modulePath}/sessionDiscovery/visible`;
+  const accessPath = `${sessionPath}/videoAccess/primary`;
+  await seedDocuments({
+    [modulePath]: { title: "Motion", order: 0 },
+    [sessionPath]: videoSession(),
+    [discoveryPath]: { sessionIds: ["introduction"] },
+    [accessPath]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  const owner = ownerDb();
+  await assertFails(getDoc(doc(owner, sessionPath)));
+  await assertFails(getDocs(collection(owner, `${modulePath}/sessions`)));
+  await assertFails(getDoc(doc(owner, discoveryPath)));
+  await assertFails(
+    getDocs(collection(owner, `${modulePath}/sessionDiscovery`)),
+  );
+  await assertFails(getDoc(doc(owner, accessPath)));
+  await assertFails(getDocs(collection(owner, `${sessionPath}/videoAccess`)));
+  await assertFails(getDoc(doc(owner, `enrollments/${CURRENT_UID}_mechanics`)));
+});
+
+test("owner Module inventory permission does not allow update or delete", async () => {
+  const path = "courses/mechanics/modules/motion";
+  await seedDocuments({ [path]: { title: "Motion", order: 0 } });
+  await assertFails(updateDoc(doc(ownerDb(), path), { title: "Changed" }));
+  await assertFails(deleteDoc(doc(ownerDb(), path)));
 });
 
 test("enrolled student discovers visible Session IDs and directly reads them", async () => {
@@ -884,9 +1047,7 @@ test("enrolled student discovers visible Session IDs and directly reads them", a
   assert.deepEqual(discovery.data().sessionIds, ["released", "unscheduled"]);
   for (const sessionId of discovery.data().sessionIds) {
     await assertSucceeds(
-      getDoc(
-        doc(db, `courses/mechanics/modules/motion/sessions/${sessionId}`),
-      ),
+      getDoc(doc(db, `courses/mechanics/modules/motion/sessions/${sessionId}`)),
     );
   }
   await assertFails(
@@ -1447,9 +1608,7 @@ test("video access document ID other than primary is denied", async () => {
     [alternatePath]: videoAccess(),
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
   });
-  await assertFails(
-    getDoc(doc(authenticatedDb(CURRENT_UID), alternatePath)),
-  );
+  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), alternatePath)));
 });
 
 test("video access collection list is denied", async () => {

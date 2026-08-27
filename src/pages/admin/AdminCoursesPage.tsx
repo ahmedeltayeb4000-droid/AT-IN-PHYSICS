@@ -15,6 +15,10 @@ import {
   createAdminModule,
 } from "../../features/admin/adminModuleCreation";
 import { buildAdminModuleCreation } from "../../features/admin/adminModuleCreationValidation";
+import {
+  AdminModuleInventoryError,
+  getAdminModules,
+} from "../../features/admin/adminModuleRepository";
 
 export function AdminCoursesPage() {
   const queryClient = useQueryClient();
@@ -36,6 +40,11 @@ export function AdminCoursesPage() {
   const courses = useQuery({
     queryKey: ["admin", "courses", "inventory"],
     queryFn: getAdminCourses,
+  });
+  const modules = useQuery({
+    queryKey: ["admin", "courses", moduleCourseId, "modules", "inventory"],
+    queryFn: () => getAdminModules(moduleCourseId),
+    enabled: moduleCourseId !== "",
   });
   const creation = useMutation({
     mutationFn: createAdminCourse,
@@ -85,7 +94,10 @@ export function AdminCoursesPage() {
     : null;
   const moduleCreation = useMutation({
     mutationFn: createAdminModule,
-    onSuccess: () => {
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ["admin", "courses", moduleCourseId, "modules", "inventory"],
+      });
       setModuleId("");
       setModuleTitle("");
       setModuleOrder("0");
@@ -268,6 +280,52 @@ export function AdminCoursesPage() {
             Module created successfully.
           </p>
         ) : null}
+      </GlassCard>
+      <GlassCard className="mt-6 p-6">
+        <h3 className="text-lg font-bold text-text">Modules</h3>
+        {!moduleCourseId ? (
+          <p className="mt-3 text-sm text-text-muted">
+            Select a Course above to view its Modules.
+          </p>
+        ) : modules.isPending ? (
+          <p className="mt-3 text-sm text-text-muted" role="status">
+            Loading Modules...
+          </p>
+        ) : modules.isError ? (
+          <div className="mt-3" role="alert">
+            <p className="font-bold text-text">Unable to load Modules</p>
+            <p className="mt-1 text-sm text-text-muted">
+              {modules.error instanceof AdminModuleInventoryError &&
+              modules.error.code === "unauthorized"
+                ? "Owner authorization is required to view Modules."
+                : modules.error instanceof AdminModuleInventoryError &&
+                    modules.error.code === "malformed"
+                  ? "Module inventory data is malformed."
+                  : "The Module inventory service is unavailable. Please try again."}
+            </p>
+          </div>
+        ) : modules.data.length === 0 ? (
+          <p className="mt-3 text-sm text-text-muted">No Modules</p>
+        ) : (
+          <ul className="mt-4 grid gap-3" aria-label="Module inventory">
+            {modules.data.map((module) => (
+              <li
+                key={module.id}
+                className="rounded-lg border border-border bg-panel/50 p-4"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <h4 className="font-bold text-text">{module.title}</h4>
+                  <span className="text-sm text-text-muted">
+                    Order {module.order}
+                  </span>
+                </div>
+                <p className="mt-2 font-mono text-xs text-text-muted">
+                  {module.id}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
       </GlassCard>
       {courses.isPending ? (
         <div

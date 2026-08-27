@@ -139,7 +139,7 @@ service cloud.firestore {
 
       match /modules/{moduleId} {
         allow get: if canReadCourseContent(courseId) || isOwner();
-        allow list: if canReadCourseContent(courseId);
+        allow list: if canReadCourseContent(courseId) || isOwner();
         allow create: if isOwner() && isValidCreatedModule(courseId, moduleId);
         allow update, delete: if false;
 

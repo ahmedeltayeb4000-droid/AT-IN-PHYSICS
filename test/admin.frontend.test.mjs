@@ -180,9 +180,8 @@ test("admin Course mapper returns exact data and rejects malformed documents", a
 });
 
 test("Course creation builder derives only canonical slug and draft status", async () => {
-  const { buildAdminCourseDraft } = await import(
-    "../src/features/admin/adminCourseCreationValidation.ts"
-  );
+  const { buildAdminCourseDraft } =
+    await import("../src/features/admin/adminCourseCreationValidation.ts");
   assert.deepEqual(
     buildAdminCourseDraft({
       courseId: "quantum-mechanics",
@@ -205,14 +204,21 @@ test("Course creation builder derives only canonical slug and draft status", asy
 });
 
 test("Course creation validation rejects unsafe IDs and malformed trusted text", async () => {
-  const { buildAdminCourseDraft } = await import(
-    "../src/features/admin/adminCourseCreationValidation.ts"
-  );
+  const { buildAdminCourseDraft } =
+    await import("../src/features/admin/adminCourseCreationValidation.ts");
   for (const input of [
     { courseId: "Unsafe", title: "Title", shortDescription: "Description" },
     { courseId: "course", title: " Title", shortDescription: "Description" },
-    { courseId: "course", title: "Title", shortDescription: "Bad\u0000Description" },
-    { courseId: "course", title: "a".repeat(161), shortDescription: "Description" },
+    {
+      courseId: "course",
+      title: "Title",
+      shortDescription: "Bad\u0000Description",
+    },
+    {
+      courseId: "course",
+      title: "a".repeat(161),
+      shortDescription: "Description",
+    },
   ]) {
     assert.throws(() => buildAdminCourseDraft(input));
   }
@@ -232,17 +238,22 @@ test("Course creation UI prevents duplicates, refreshes inventory, and sanitizes
   assert.match(page, /role="alert"/);
   assert.match(page, /role="status"/);
   assert.doesNotMatch(page, /error\.message|\.stack\b/);
-  assert.match(repository, /doc\(firebaseDb,\s*"courses",\s*proposal\.courseId\)/);
+  assert.match(
+    repository,
+    /doc\(firebaseDb,\s*"courses",\s*proposal\.courseId\)/,
+  );
   assert.match(repository, /runTransaction/);
   assert.match(repository, /transaction\.get/);
-  assert.match(repository, /transaction\.set\(reference,\s*proposal\.document\)/);
+  assert.match(
+    repository,
+    /transaction\.set\(reference,\s*proposal\.document\)/,
+  );
   assert.doesNotMatch(repository, /updateDoc|deleteDoc|addDoc|merge\s*:/);
 });
 
 test("Module creation builder produces the exact fixed-path payload", async () => {
-  const { buildAdminModuleCreation } = await import(
-    "../src/features/admin/adminModuleCreationValidation.ts"
-  );
+  const { buildAdminModuleCreation } =
+    await import("../src/features/admin/adminModuleCreationValidation.ts");
   assert.deepEqual(
     buildAdminModuleCreation({
       courseId: "mechanics",
@@ -261,16 +272,20 @@ test("Module creation builder produces the exact fixed-path payload", async () =
 });
 
 test("Module creation validation matches IDs, title, and safe integer order", async () => {
-  const { buildAdminModuleCreation } = await import(
-    "../src/features/admin/adminModuleCreationValidation.ts"
-  );
+  const { buildAdminModuleCreation } =
+    await import("../src/features/admin/adminModuleCreationValidation.ts");
   for (const input of [
     { courseId: "Unsafe", moduleId: "module", title: "Title", order: "0" },
     { courseId: "course", moduleId: "../module", title: "Title", order: "0" },
     { courseId: "course", moduleId: "module", title: " Title", order: "0" },
     { courseId: "course", moduleId: "module", title: "Title", order: "-1" },
     { courseId: "course", moduleId: "module", title: "Title", order: "1.5" },
-    { courseId: "course", moduleId: "module", title: "Title", order: "9007199254740992" },
+    {
+      courseId: "course",
+      moduleId: "module",
+      title: "Title",
+      order: "9007199254740992",
+    },
   ]) {
     assert.throws(() => buildAdminModuleCreation(input));
   }
@@ -287,11 +302,82 @@ test("Module creation UI uses Course selection, fixed transaction, and sanitized
   assert.match(page, /moduleCreation\.isPending/);
   assert.match(page, /Module created successfully/);
   assert.doesNotMatch(page, /moduleCreation\.error\.message|\.stack\b/);
-  assert.match(repository, /"courses"[\s\S]*proposal\.courseId[\s\S]*"modules"[\s\S]*proposal\.moduleId/);
+  assert.match(
+    repository,
+    /"courses"[\s\S]*proposal\.courseId[\s\S]*"modules"[\s\S]*proposal\.moduleId/,
+  );
   assert.match(repository, /runTransaction/);
   assert.match(repository, /transaction\.get/);
-  assert.match(repository, /transaction\.set\(reference,\s*proposal\.document\)/);
+  assert.match(
+    repository,
+    /transaction\.set\(reference,\s*proposal\.document\)/,
+  );
   assert.doesNotMatch(repository, /updateDoc|deleteDoc|addDoc|merge\s*:/);
+});
+
+test("admin Module mapper accepts exact data and rejects malformed documents", async () => {
+  const { mapAdminModuleDocument } =
+    await import("../src/features/admin/adminModuleMapper.ts");
+  assert.deepEqual(
+    mapAdminModuleDocument("motion", { title: "Motion", order: 0 }),
+    { id: "motion", title: "Motion", order: 0 },
+  );
+  for (const [id, value] of [
+    ["Unsafe/Path", { title: "Motion", order: 0 }],
+    ["motion", { title: " Motion", order: 0 }],
+    ["motion", { title: "Motion", order: -1 }],
+    ["motion", { title: "Motion", order: 1.5 }],
+    ["motion", { title: "Motion", order: Number.MAX_SAFE_INTEGER + 1 }],
+    ["motion", { title: "Motion", order: 0, status: "published" }],
+  ]) {
+    assert.throws(() => mapAdminModuleDocument(id, value));
+  }
+});
+
+test("admin Module repository is fixed-path, read-only, validated, and deterministic", async () => {
+  const repository = await source(
+    "../src/features/admin/adminModuleRepository.ts",
+  );
+  assert.match(repository, /isCanonicalAdminModuleId\(courseId\)/);
+  assert.match(
+    repository,
+    /collection\(firebaseDb,\s*"courses",\s*courseId,\s*"modules"\)/,
+  );
+  assert.match(repository, /mapAdminModuleDocument/);
+  assert.match(repository, /left\.order\s*-\s*right\.order/);
+  assert.match(repository, /left\.id\s*<\s*right\.id/);
+  assert.doesNotMatch(
+    repository,
+    /\b(?:setDoc|updateDoc|addDoc|deleteDoc|runTransaction|writeBatch)\b/,
+  );
+});
+
+test("owner-selected Course loads a sanitized read-only Module inventory", async () => {
+  const page = await source("../src/pages/admin/AdminCoursesPage.tsx");
+  assert.match(
+    page,
+    /queryFn:\s*\(\)\s*=>\s*getAdminModules\(moduleCourseId\)/,
+  );
+  assert.match(page, /enabled:\s*moduleCourseId\s*!==\s*""/);
+  assert.match(page, /Loading Modules/);
+  assert.match(page, /No Modules/);
+  assert.match(page, /Unable to load Modules/);
+  assert.match(page, /Owner authorization is required to view Modules/);
+  assert.match(page, /Module inventory data is malformed/);
+  assert.match(page, /modules\.data\.map/);
+  assert.match(page, /module\.title/);
+  assert.match(page, /module\.id/);
+  assert.match(page, /module\.order/);
+  assert.doesNotMatch(page, /modules\.error\.message|modules\.error\.stack/);
+  assert.doesNotMatch(page, /Edit Module|Delete Module|Reorder Module/);
+});
+
+test("successful Module creation refreshes only the selected Course inventory", async () => {
+  const page = await source("../src/pages/admin/AdminCoursesPage.tsx");
+  assert.match(
+    page,
+    /moduleCreation[\s\S]*?onSuccess:\s*async[\s\S]*?invalidateQueries\([\s\S]*?"admin"[\s\S]*?moduleCourseId[\s\S]*?"modules"[\s\S]*?"inventory"/,
+  );
 });
 
 test("admin frontend introduces no update, delete, random-ID, or privileged SDK API", async () => {
@@ -305,6 +391,8 @@ test("admin frontend introduces no update, delete, random-ID, or privileged SDK 
     "../src/features/admin/adminCourseCreationValidation.ts",
     "../src/features/admin/adminModuleCreation.ts",
     "../src/features/admin/adminModuleCreationValidation.ts",
+    "../src/features/admin/adminModuleRepository.ts",
+    "../src/features/admin/adminModuleMapper.ts",
     "../src/features/auth/AuthProvider.tsx",
     "../src/features/auth/AuthGuards.tsx",
   ];
