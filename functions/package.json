@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "npm run build && node --test lib/test/smoke.test.js lib/test/ownerBootstrap.test.js lib/test/enrollmentValidation.test.js lib/test/enrollmentGrantCli.test.js lib/test/courseCreation.test.js lib/test/courseInventory.test.js lib/test/moduleCreation.test.js lib/test/sessionCreation.test.js lib/test/sessionPublication.test.js lib/test/sessionDiscovery.test.js lib/test/sessionDiscoveryMigration.test.js lib/test/lessonContentPublication.test.js lib/test/videoPackaging.test.js lib/test/videoPublication.test.js lib/test/videoDescriptorPublication.test.js lib/test/videoHostingPreparation.test.js lib/test/videoRelease.test.js lib/test/videoDeployment.test.js lib/test/videoBinding.test.js",
+    "test": "npm run build && node --test lib/test/smoke.test.js lib/test/ownerBootstrap.test.js lib/test/enrollmentValidation.test.js lib/test/enrollmentGrantCli.test.js lib/test/courseCreation.test.js lib/test/courseInventory.test.js lib/test/moduleCreation.test.js lib/test/sessionCreation.test.js lib/test/sessionPublication.test.js lib/test/sessionDiscovery.test.js lib/test/sessionDiscoveryMigration.test.js lib/test/lessonContentPublication.test.js lib/test/videoPackaging.test.js lib/test/videoPublication.test.js lib/test/videoDescriptorPublication.test.js lib/test/videoHostingPreparation.test.js lib/test/videoRelease.test.js lib/test/videoDeployment.test.js lib/test/videoBinding.test.js lib/test/videoRecovery.test.js",
     "test:integration": "node --test lib/test/grantEnrollment.integration.test.js",
     "test:enrollment-grant-cli": "npm run build && node --test lib/test/enrollmentGrantCli.test.js",
     "test:enrollment-grant-cli:integration": "node --test lib/test/enrollmentGrantCli.integration.test.js",

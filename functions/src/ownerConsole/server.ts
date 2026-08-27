@@ -50,6 +50,7 @@ import {
 import { VIDEO_CLIENT_JS } from "./videoClient.js";
 import { VIDEO_DEPLOY_CLIENT_JS } from "./videoDeployClient.js";
 import { VIDEO_BINDING_CLIENT_JS } from "./videoBindingClient.js";
+import { VIDEO_RECOVERY_CLIENT_JS } from "./videoRecoveryClient.js";
 import {
   preflightOwnerHostingRelease,
   prepareOwnerHostingRelease,
@@ -70,6 +71,7 @@ import {
   type OwnerBindingReview,
   type OwnerVerifiedDeployment,
 } from "./videoBinding.js";
+import { recoverOwnerExistingDeployment } from "./videoRecovery.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -103,6 +105,7 @@ export type OwnerConsoleDependencies = Readonly<{
   retryRemoteVerification?: typeof retryOwnerRemoteVerification;
   createBindingReview?: typeof createOwnerBindingReview;
   applyBindingReview?: typeof applyOwnerBindingReview;
+  recoverExistingDeployment?: typeof recoverOwnerExistingDeployment;
 }>;
 
 type Review = {
@@ -235,6 +238,8 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
     deps.retryRemoteVerification ?? retryOwnerRemoteVerification;
   const createBindingReview = deps.createBindingReview ?? createOwnerBindingReview;
   const applyBindingReview = deps.applyBindingReview ?? applyOwnerBindingReview;
+  const recoverExistingDeployment =
+    deps.recoverExistingDeployment ?? recoverOwnerExistingDeployment;
   const preparedVideos = new Map<string, OwnerPreparedVideo>();
   const videoReleases = new Map<string, OwnerReleaseReview>();
   const preflightedVideoReleases = new Set<string>();
@@ -272,7 +277,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}`,
+          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
@@ -455,6 +460,31 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
             review,
           });
           return send(res, 200, { deployment: verification });
+        }
+        if (url.pathname === "/api/video/deploy/recover") {
+          exactInput(input, ["courseId", "moduleId", "sessionId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const target = {
+            courseId: validateCourseId(input.courseId),
+            moduleId: validateCourseId(input.moduleId),
+            sessionId: validateCourseId(input.sessionId),
+          };
+          await readLesson(
+            deps.db,
+            target.courseId,
+            target.moduleId,
+            target.sessionId,
+          );
+          const deploymentId = randomBytes(24).toString("base64url");
+          const reviewId = randomBytes(24).toString("base64url");
+          const recovered = await recoverExistingDeployment(
+            target,
+            deps.projectId,
+            deploymentId,
+            reviewId,
+          );
+          verifiedDeployments.set(deploymentId, recovered.deployment);
+          return send(res, 200, { deployment: recovered.safe });
         }
         if (url.pathname === "/api/video/bind/review") {
           exactInput(input, ["deploymentId"]);

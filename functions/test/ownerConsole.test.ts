@@ -552,6 +552,8 @@ test("creation failures are sanitized and existing forms refresh inventories wit
     assert.match(js, /lessonPreview'\)\.textContent/);
     assert.match(js, /lessonText\.maxLength=20000/);
     assert.match(js, /Manage Video/);
+    assert.match(js, /Verify Existing Deployment/);
+    assert.match(js, /Hosting deployment performed: No/);
     assert.match(js, /LOCAL ONLY/);
     assert.doesNotMatch(js, /contentKey|firebase deploy/);
     assert.doesNotMatch(js, /location\.reload|window\.location/);
@@ -855,6 +857,7 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
   let retryCalls = 0;
   let bindingReviewCalls = 0;
   let bindingApplyCalls = 0;
+  let recoveryCalls = 0;
   const safe = {
     target: { courseId: "course", moduleId: "module", sessionId: "session" },
     videoAssetId: "session-video",
@@ -874,6 +877,15 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
     ownerUid: "owner",
     projectId: "demo-at-in-physics",
     authorize: async () => {},
+    readLesson: async (_db, courseId, moduleId, sessionId) => ({
+      courseId,
+      moduleId,
+      sessionId,
+      sessionTitle: "Session",
+      publicationStatus: "draft",
+      lessonText: null,
+      revisionMillis: 100,
+    }),
     prepareVideo: async (_db, input) => {
       calls += 1;
       assert.equal(input.bytes.length, 20);
@@ -1010,6 +1022,17 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
       assert.equal(review.safe.projectId, projectId);
       return { status: "created", postApplyVerified: true, sessionId: "session", videoAssetId: "session-video", remoteVerified: true, firestoreBindingVerified: true };
     },
+    recoverExistingDeployment: async (target, projectId, deploymentId, reviewId) => {
+      recoveryCalls += 1;
+      assert.deepEqual(target, safe.target);
+      const review = {
+        reviewId,
+        release: { descriptorFileName: safe.descriptorFileName },
+        fingerprint: "8".repeat(64),
+        safe: { projectId, hostingTarget: "production", hostingSite: "at-in-physics", firebaseToolsVersion: "15.28.1", gitCommit: "0".repeat(40), target, videoAssetId: safe.videoAssetId, artifactFileName: safe.artifactFileName, artifactSha256: safe.artifactSha256, artifactSize: safe.encryptedSize, hostingRoute: safe.hostingRoute, releaseFileCount: 2, releaseTotalBytes: 100, warning: "safe", state: "PRODUCTION_DEPLOYMENT_REVIEW_NOT_DEPLOYED" },
+      } as never;
+      return { deployment: { deploymentId, status: "VERIFIED_DEPLOYED", review }, safe: { deploymentId, status: "VERIFIED_DEPLOYED", projectId, sessionId: target.sessionId, videoAssetId: safe.videoAssetId, hostingRoute: safe.hostingRoute, artifactSha256: safe.artifactSha256, artifactSize: safe.encryptedSize, remoteVerified: true, hostingDeploymentPerformed: false, firestoreBindingPerformed: false } };
+    },
   });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
@@ -1045,6 +1068,14 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
         },
         body: JSON.stringify(value),
       });
+    assert.equal((await postJson("/api/video/bind/review", { deploymentId: "unknown" })).status, 409);
+    const recoveryResponse = await postJson("/api/video/deploy/recover", safe.target);
+    assert.equal(recoveryResponse.status, 200);
+    const recoveryText = await recoveryResponse.text();
+    assert.doesNotMatch(recoveryText, /contentKey|SECRET|descriptor|credential|token/i);
+    const recoveredDeploymentId = JSON.parse(recoveryText).deployment.deploymentId as string;
+    assert.equal((await postJson("/api/video/bind/review", { deploymentId: recoveredDeploymentId })).status, 200);
+    assert.equal((await postJson("/api/video/deploy/recover", { ...safe.target, videoAssetId: safe.videoAssetId })).status, 400);
     const releaseResponse = await postJson("/api/video/release", {
       preparationId,
     });
@@ -1149,8 +1180,9 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
     assert.equal(deployReviewCalls, 1);
     assert.equal(deployCalls, 1);
     assert.equal(retryCalls, 1);
-    assert.equal(bindingReviewCalls, 1);
+    assert.equal(bindingReviewCalls, 2);
     assert.equal(bindingApplyCalls, 1);
+    assert.equal(recoveryCalls, 1);
     assert.equal(
       (
         await postJson("/api/video/release", {

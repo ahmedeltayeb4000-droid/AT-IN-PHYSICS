@@ -130,6 +130,16 @@ async function runPreflight(options: {
   return module.runHostingDeployPreflight(options);
 }
 
+export async function runOwnerFreshHostingPreflight(
+  projectId: string,
+  dependencies: OwnerVideoReleaseDependencies = {},
+) {
+  return (dependencies.runPreflight ?? runPreflight)({
+    projectId,
+    expectedProjectId: projectId,
+  });
+}
+
 function assertPreparedIdentity(
   known: OwnerPreparedVideo,
   prepared: PreparedVideoPublicationPackage,
