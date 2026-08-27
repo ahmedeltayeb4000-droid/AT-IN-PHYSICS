@@ -48,12 +48,20 @@ import {
   validateOwnerVideoFileName,
 } from "./videoPreparation.js";
 import { VIDEO_CLIENT_JS } from "./videoClient.js";
+import { VIDEO_DEPLOY_CLIENT_JS } from "./videoDeployClient.js";
 import {
   preflightOwnerHostingRelease,
   prepareOwnerHostingRelease,
   type OwnerPreparedVideo,
   type OwnerReleaseReview,
 } from "./videoRelease.js";
+import {
+  createOwnerDeployReview,
+  executeOwnerHostingDeployment,
+  HOSTING_DEPLOY_CONFIRMATION,
+  retryOwnerRemoteVerification,
+  type OwnerDeployReview,
+} from "./videoDeployment.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -82,6 +90,9 @@ export type OwnerConsoleDependencies = Readonly<{
   prepareVideo?: typeof prepareOwnerProtectedVideo;
   prepareVideoRelease?: typeof prepareOwnerHostingRelease;
   preflightVideoRelease?: typeof preflightOwnerHostingRelease;
+  createDeployReview?: typeof createOwnerDeployReview;
+  deployHosting?: typeof executeOwnerHostingDeployment;
+  retryRemoteVerification?: typeof retryOwnerRemoteVerification;
 }>;
 
 type Review = {
@@ -208,8 +219,18 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
     deps.prepareVideoRelease ?? prepareOwnerHostingRelease;
   const preflightVideoRelease =
     deps.preflightVideoRelease ?? preflightOwnerHostingRelease;
+  const createDeployReview = deps.createDeployReview ?? createOwnerDeployReview;
+  const deployHosting = deps.deployHosting ?? executeOwnerHostingDeployment;
+  const retryRemoteVerification =
+    deps.retryRemoteVerification ?? retryOwnerRemoteVerification;
   const preparedVideos = new Map<string, OwnerPreparedVideo>();
   const videoReleases = new Map<string, OwnerReleaseReview>();
+  const preflightedVideoReleases = new Set<string>();
+  const deployReviews = new Map<
+    string,
+    { review: OwnerDeployReview; used: boolean }
+  >();
+  const deployedVideoReleases = new Map<string, OwnerDeployReview>();
   const server = createServer(async (req, res) => {
     const address = server.address() as AddressInfo | null;
     const origin = `http://${OWNER_CONSOLE_HOST}:${address?.port ?? OWNER_CONSOLE_DEFAULT_PORT}`;
@@ -236,7 +257,9 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           ...JSON_HEADERS,
           "content-type": "text/javascript; charset=utf-8",
         });
-        return res.end(`${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS}`);
+        return res.end(
+          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS}\n${VIDEO_DEPLOY_CLIENT_JS}`,
+        );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
         return send(res, 200, { projectId: deps.projectId, csrf });
@@ -354,7 +377,58 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
             release,
             deps.projectId,
           );
+          preflightedVideoReleases.add(releaseId);
           return send(res, 200, { preflight });
+        }
+        if (url.pathname === "/api/video/deploy/review") {
+          exactInput(input, ["releaseId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const releaseId = requiredString(input.releaseId);
+          const release = videoReleases.get(releaseId);
+          if (!release || !preflightedVideoReleases.has(releaseId))
+            return fail(res, 409);
+          const reviewId = randomBytes(24).toString("base64url");
+          const review = await createDeployReview(
+            release,
+            deps.projectId,
+            reviewId,
+          );
+          deployReviews.set(reviewId, { review, used: false });
+          return send(res, 200, { reviewId, review: review.safe });
+        }
+        if (url.pathname === "/api/video/deploy/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          if (
+            requiredString(input.confirmation) !== HOSTING_DEPLOY_CONFIRMATION
+          )
+            return fail(res, 400);
+          const reviewId = requiredString(input.reviewId);
+          const record = deployReviews.get(reviewId);
+          if (!record || record.used) return fail(res, 409);
+          record.used = true;
+          const deploymentId = randomBytes(24).toString("base64url");
+          const result = await deployHosting(
+            record.review,
+            deps.projectId,
+            deploymentId,
+          );
+          deployReviews.delete(reviewId);
+          if (result.deployCompleted)
+            deployedVideoReleases.set(deploymentId, record.review);
+          return send(res, 200, { deployment: result.safe });
+        }
+        if (url.pathname === "/api/video/deploy/verify") {
+          exactInput(input, ["deploymentId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const deploymentId = requiredString(input.deploymentId);
+          const review = deployedVideoReleases.get(deploymentId);
+          if (!review) return fail(res, 409);
+          const verification = await retryRemoteVerification(
+            review,
+            deploymentId,
+          );
+          return send(res, 200, { deployment: verification });
         }
         if (url.pathname === "/api/lesson/review") {
           exactInput(input, [

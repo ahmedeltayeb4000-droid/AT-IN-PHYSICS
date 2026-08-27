@@ -128,8 +128,12 @@ test("preflight binds exact project, route, size, and hash with truthful quota w
       return {
         reportPath: "ignored",
         report: {
+          formatVersion: "hosting-preflight-v1",
+          generatedAt: "2026-08-27T00:00:00.000Z",
           projectId: "at-in-physics",
           gitCommit: "0".repeat(40),
+          firebaseConfigSha256: "1".repeat(64),
+          firebaseRcSha256: "2".repeat(64),
           summary: {
             fileCount: 2,
             totalBytes: 100,

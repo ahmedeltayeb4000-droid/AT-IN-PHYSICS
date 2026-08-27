@@ -20,10 +20,18 @@ type ReleaseAssembly = Readonly<{
   files: string[];
   mediaCount: number;
 }>;
-type PreflightEntry = Readonly<{ path: string; size: number; sha256: string }>;
-type PreflightReport = Readonly<{
+export type PreflightEntry = Readonly<{
+  path: string;
+  size: number;
+  sha256: string;
+}>;
+export type PreflightReport = Readonly<{
+  formatVersion: string;
+  generatedAt: string;
   projectId: string;
   gitCommit: string;
+  firebaseConfigSha256: string;
+  firebaseRcSha256: string;
   summary: Readonly<{
     fileCount: number;
     totalBytes: number;
@@ -204,7 +212,7 @@ export async function prepareOwnerHostingRelease(
   };
 }
 
-export async function preflightOwnerHostingRelease(
+export async function inspectOwnerHostingPreflight(
   review: OwnerReleaseReview,
   projectId: string,
   dependencies: OwnerVideoReleaseDependencies = {},
@@ -247,7 +255,7 @@ export async function preflightOwnerHostingRelease(
     artifact.sha256 !== review.safe.artifactSha256
   )
     throw new Error("Preflight release no longer matches the reviewed video.");
-  return {
+  const safe = {
     projectId: report.projectId,
     gitCommit: report.gitCommit,
     ...report.summary,
@@ -263,4 +271,14 @@ export async function preflightOwnerHostingRelease(
     deploySource: report.deployment.deploySource,
     state: "READY_FOR_DEPLOYMENT_REVIEW_NOT_DEPLOYED" as const,
   };
+  return { report, safe };
+}
+
+export async function preflightOwnerHostingRelease(
+  review: OwnerReleaseReview,
+  projectId: string,
+  dependencies: OwnerVideoReleaseDependencies = {},
+) {
+  return (await inspectOwnerHostingPreflight(review, projectId, dependencies))
+    .safe;
 }

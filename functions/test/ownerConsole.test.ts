@@ -848,6 +848,9 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
   let calls = 0;
   let releaseCalls = 0;
   let preflightCalls = 0;
+  let deployReviewCalls = 0;
+  let deployCalls = 0;
+  let retryCalls = 0;
   const safe = {
     target: { courseId: "course", moduleId: "module", sessionId: "session" },
     videoAssetId: "session-video",
@@ -918,6 +921,62 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
         state: "READY_FOR_DEPLOYMENT_REVIEW_NOT_DEPLOYED",
       };
     },
+    createDeployReview: async (release, projectId, reviewId) => {
+      deployReviewCalls += 1;
+      return {
+        reviewId,
+        release,
+        fingerprint: "9".repeat(64),
+        safe: {
+          projectId,
+          hostingTarget: "production",
+          hostingSite: "at-in-physics",
+          firebaseToolsVersion: "15.28.1",
+          gitCommit: "0".repeat(40),
+          target: safe.target,
+          videoAssetId: safe.videoAssetId,
+          artifactFileName: safe.artifactFileName,
+          artifactSha256: safe.artifactSha256,
+          artifactSize: safe.encryptedSize,
+          hostingRoute: safe.hostingRoute,
+          releaseFileCount: 2,
+          releaseTotalBytes: 100,
+          warning:
+            "This will upload the audited Hosting release to production.",
+          state: "PRODUCTION_DEPLOYMENT_REVIEW_NOT_DEPLOYED",
+        },
+      };
+    },
+    deployHosting: async (review, projectId, deploymentId) => {
+      deployCalls += 1;
+      assert.equal(review.safe.projectId, projectId);
+      return {
+        deployCompleted: true,
+        safe: {
+          deploymentId,
+          status: "VERIFIED_DEPLOYED",
+          projectId,
+          hostingSite: "at-in-physics",
+          hostingRoute: safe.hostingRoute,
+          artifactSha256: safe.artifactSha256,
+          artifactSize: safe.encryptedSize,
+          remoteVerified: true,
+        },
+      };
+    },
+    retryRemoteVerification: async (review, deploymentId) => {
+      retryCalls += 1;
+      return {
+        deploymentId,
+        status: "VERIFIED_DEPLOYED",
+        projectId: review.safe.projectId,
+        hostingSite: review.safe.hostingSite,
+        hostingRoute: review.safe.hostingRoute,
+        artifactSha256: review.safe.artifactSha256,
+        artifactSize: review.safe.artifactSize,
+        remoteVerified: true,
+      };
+    },
   });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
@@ -965,8 +1024,86 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
     });
     assert.equal(preflightResponse.status, 200);
     assert.doesNotMatch(await preflightResponse.text(), /contentKey|SECRET/);
+    const deployReviewResponse = await postJson("/api/video/deploy/review", {
+      releaseId,
+    });
+    assert.equal(deployReviewResponse.status, 200);
+    const deployReviewText = await deployReviewResponse.text();
+    assert.doesNotMatch(
+      deployReviewText,
+      /contentKey|SECRET|credential|token|descriptorFileName/i,
+    );
+    const deployReviewId = JSON.parse(deployReviewText).reviewId as string;
+    assert.equal(
+      (
+        await postJson("/api/video/deploy/apply", {
+          reviewId: deployReviewId,
+          confirmation: "not confirmed",
+        })
+      ).status,
+      400,
+    );
+    const deployResponse = await postJson("/api/video/deploy/apply", {
+      reviewId: deployReviewId,
+      confirmation: "DEPLOY HOSTING TO PRODUCTION",
+    });
+    assert.equal(deployResponse.status, 200);
+    const deployText = await deployResponse.text();
+    assert.doesNotMatch(deployText, /contentKey|SECRET|credential|token/i);
+    const deploymentId = JSON.parse(deployText).deployment
+      .deploymentId as string;
+    assert.equal(
+      (
+        await postJson("/api/video/deploy/apply", {
+          reviewId: deployReviewId,
+          confirmation: "DEPLOY HOSTING TO PRODUCTION",
+        })
+      ).status,
+      409,
+    );
+    assert.equal(
+      (
+        await postJson("/api/video/deploy/verify", {
+          deploymentId,
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await postJson("/api/video/deploy/verify", {
+          deploymentId,
+          url: "https://evil.example/video.atv1",
+          sha256: "evil",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await postJson(
+          "/api/video/deploy/review",
+          { releaseId },
+          { origin: "http://evil.example" },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await postJson(
+          "/api/video/deploy/review",
+          { releaseId },
+          { "content-type": "text/plain" },
+        )
+      ).status,
+      415,
+    );
     assert.equal(releaseCalls, 1);
     assert.equal(preflightCalls, 1);
+    assert.equal(deployReviewCalls, 1);
+    assert.equal(deployCalls, 1);
+    assert.equal(retryCalls, 1);
     assert.equal(
       (
         await postJson("/api/video/release", {
