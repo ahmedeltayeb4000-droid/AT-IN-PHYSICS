@@ -15,6 +15,9 @@ import {
   OWNER_CONSOLE_HOST,
 } from "../src/ownerConsole/server.js";
 import type { SessionPublicationResult } from "../src/tooling/sessionPublication.js";
+import type { CourseCreationOptions } from "../src/tooling/courseCreation.js";
+import type { ModuleCreationOptions } from "../src/tooling/moduleCreation.js";
+import type { SessionCreationOptions } from "../src/tooling/sessionCreation.js";
 
 const course = (id: string, title = "Course") => ({
   id,
@@ -276,6 +279,268 @@ test("authority failure and stale review fail closed before apply", async () => 
       409,
     );
     assert.equal(applies, 0);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("creation endpoints pass only validated minimum contracts to trusted services", async () => {
+  const courses: CourseCreationOptions[] = [];
+  const modules: ModuleCreationOptions[] = [];
+  const createdSessions: SessionCreationOptions[] = [];
+  const fakeDb = {} as Firestore;
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: fakeDb,
+    ownerUid: "trusted-owner",
+    projectId: "demo-at-in-physics",
+    authorize: async () => {},
+    createCourse: async (_auth, _db, options, uid) => {
+      assert.equal(uid, "trusted-owner");
+      courses.push(options);
+      return {
+        coursePath: `courses/${options.courseId}`,
+        currentCourse: "MISSING",
+        changeRequired: true,
+        applyStatus: "created",
+        postApplyVerified: true,
+      };
+    },
+    createModule: async (_auth, _db, options, uid) => {
+      assert.equal(uid, "trusted-owner");
+      modules.push(options);
+      return {
+        modulePath: `courses/${options.courseId}/modules/${options.moduleId}`,
+        currentModule: "MISSING",
+        proposedTitle: options.title,
+        proposedOrder: options.order,
+        changeRequired: true,
+        applyStatus: "created",
+        postApplyVerified: true,
+      };
+    },
+    createSession: async (_auth, _db, options, uid) => {
+      assert.equal(uid, "trusted-owner");
+      createdSessions.push(options);
+      return {
+        sessionPath: `courses/${options.courseId}/modules/${options.moduleId}/sessions/${options.sessionId}`,
+        currentSession: "MISSING",
+        proposedTitle: options.title,
+        proposedOrder: options.order,
+        proposedPublicationStatus: "draft",
+        changeRequired: true,
+        applyStatus: "created",
+        postApplyVerified: true,
+      };
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const post = (
+    path: string,
+    value: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    fetch(origin + path, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "x-owner-control-csrf": csrfForTests,
+        ...headers,
+      },
+      body: JSON.stringify(value),
+    });
+  try {
+    assert.equal(
+      (
+        await post("/api/courses/create", {
+          courseId: "physics",
+          title: "Physics",
+          shortDescription: "Core course",
+        })
+      ).status,
+      200,
+    );
+    assert.deepEqual(courses, [
+      {
+        courseId: "physics",
+        title: "Physics",
+        shortDescription: "Core course",
+        apply: true,
+      },
+    ]);
+    assert.equal(
+      (
+        await post("/api/modules/create", {
+          courseId: "physics",
+          moduleId: "motion",
+          title: "Motion",
+          order: "0",
+        })
+      ).status,
+      200,
+    );
+    assert.deepEqual(modules, [
+      {
+        courseId: "physics",
+        moduleId: "motion",
+        title: "Motion",
+        order: 0,
+        apply: true,
+      },
+    ]);
+    assert.equal(
+      (
+        await post("/api/sessions/create", {
+          courseId: "physics",
+          moduleId: "motion",
+          sessionId: "speed",
+          title: "Speed",
+          order: "1",
+        })
+      ).status,
+      200,
+    );
+    assert.deepEqual(createdSessions, [
+      {
+        courseId: "physics",
+        moduleId: "motion",
+        sessionId: "speed",
+        title: "Speed",
+        order: 1,
+        apply: true,
+      },
+    ]);
+    for (const injected of [
+      { courseId: "bad/path", title: "Bad", shortDescription: "Bad" },
+      {
+        courseId: "physics",
+        title: "Physics",
+        shortDescription: "Core",
+        status: "published",
+      },
+      {
+        courseId: "physics",
+        title: "Physics",
+        shortDescription: "Core",
+        ownerUid: "attacker",
+      },
+      {
+        courseId: "physics",
+        title: "Physics",
+        shortDescription: "Core",
+        projectId: "other",
+      },
+      {
+        courseId: "physics",
+        title: "Physics",
+        shortDescription: "Core",
+        path: "courses/other",
+      },
+    ])
+      assert.equal((await post("/api/courses/create", injected)).status, 400);
+    assert.equal(courses.length, 1);
+    assert.equal(
+      (
+        await post("/api/modules/create", {
+          courseId: "physics",
+          moduleId: "motion",
+          title: "Motion",
+          order: "-1",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await post("/api/sessions/create", {
+          courseId: "physics",
+          moduleId: "motion",
+          sessionId: "speed",
+          title: "Speed",
+          order: "1",
+          publicationStatus: "published",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(modules.length, 1);
+    assert.equal(createdSessions.length, 1);
+    assert.equal(
+      (
+        await post(
+          "/api/courses/create",
+          { courseId: "x", title: "X", shortDescription: "X" },
+          { origin: "http://evil.example" },
+        )
+      ).status,
+      403,
+    );
+    const nonJson = await fetch(origin + "/api/courses/create", {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "text/plain",
+        "x-owner-control-csrf": csrfForTests,
+      },
+      body: "{}",
+    });
+    assert.equal(nonJson.status, 415);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("creation failures are sanitized and existing forms refresh inventories without page reload", async () => {
+  let authorized = false;
+  let creationCalls = 0;
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: {} as Firestore,
+    ownerUid: "owner",
+    projectId: "demo-at-in-physics",
+    authorize: async () => {
+      if (!authorized) throw new Error("not owner");
+    },
+    createCourse: async () => {
+      creationCalls += 1;
+      throw new Error("RAW_FIREBASE_SECRET_ERROR");
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  try {
+    const create = () =>
+      fetch(origin + "/api/courses/create", {
+        method: "POST",
+        headers: {
+          origin,
+          "content-type": "application/json",
+          "x-owner-control-csrf": csrfForTests,
+        },
+        body: JSON.stringify({
+          courseId: "course",
+          title: "Course",
+          shortDescription: "Description",
+        }),
+      });
+    assert.equal((await create()).status, 400);
+    assert.equal(creationCalls, 0);
+    authorized = true;
+    const response = await create();
+    const text = await response.text();
+    assert.equal(response.status, 400);
+    assert.equal(text.includes("RAW_FIREBASE_SECRET_ERROR"), false);
+    const html = await (await fetch(origin)).text();
+    const js = await (await fetch(origin + "/app.js")).text();
+    assert.match(html, /id="courseForm"/);
+    assert.match(html, /id="moduleForm"/);
+    assert.match(html, /id="sessionForm"/);
+    assert.match(js, /loadCourses\(x\.courseId\)/);
+    assert.match(js, /loadModules\(x\.moduleId\)/);
+    assert.match(js, /await loadSessions\(\)/);
+    assert.doesNotMatch(js, /location\.reload|window\.location/);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
