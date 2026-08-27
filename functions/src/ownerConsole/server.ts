@@ -49,6 +49,7 @@ import {
 } from "./videoPreparation.js";
 import { VIDEO_CLIENT_JS } from "./videoClient.js";
 import { VIDEO_DEPLOY_CLIENT_JS } from "./videoDeployClient.js";
+import { VIDEO_BINDING_CLIENT_JS } from "./videoBindingClient.js";
 import {
   preflightOwnerHostingRelease,
   prepareOwnerHostingRelease,
@@ -62,6 +63,13 @@ import {
   retryOwnerRemoteVerification,
   type OwnerDeployReview,
 } from "./videoDeployment.js";
+import {
+  applyOwnerBindingReview,
+  createOwnerBindingReview,
+  VIDEO_BIND_CONFIRMATION,
+  type OwnerBindingReview,
+  type OwnerVerifiedDeployment,
+} from "./videoBinding.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -93,6 +101,8 @@ export type OwnerConsoleDependencies = Readonly<{
   createDeployReview?: typeof createOwnerDeployReview;
   deployHosting?: typeof executeOwnerHostingDeployment;
   retryRemoteVerification?: typeof retryOwnerRemoteVerification;
+  createBindingReview?: typeof createOwnerBindingReview;
+  applyBindingReview?: typeof applyOwnerBindingReview;
 }>;
 
 type Review = {
@@ -223,6 +233,8 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const deployHosting = deps.deployHosting ?? executeOwnerHostingDeployment;
   const retryRemoteVerification =
     deps.retryRemoteVerification ?? retryOwnerRemoteVerification;
+  const createBindingReview = deps.createBindingReview ?? createOwnerBindingReview;
+  const applyBindingReview = deps.applyBindingReview ?? applyOwnerBindingReview;
   const preparedVideos = new Map<string, OwnerPreparedVideo>();
   const videoReleases = new Map<string, OwnerReleaseReview>();
   const preflightedVideoReleases = new Set<string>();
@@ -231,6 +243,8 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
     { review: OwnerDeployReview; used: boolean }
   >();
   const deployedVideoReleases = new Map<string, OwnerDeployReview>();
+  const verifiedDeployments = new Map<string, OwnerVerifiedDeployment>();
+  const bindingReviews = new Map<string, { review: OwnerBindingReview; used: boolean }>();
   const server = createServer(async (req, res) => {
     const address = server.address() as AddressInfo | null;
     const origin = `http://${OWNER_CONSOLE_HOST}:${address?.port ?? OWNER_CONSOLE_DEFAULT_PORT}`;
@@ -258,7 +272,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}`,
+          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
@@ -414,8 +428,15 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
             deploymentId,
           );
           deployReviews.delete(reviewId);
-          if (result.deployCompleted)
+          if (result.deployCompleted) {
             deployedVideoReleases.set(deploymentId, record.review);
+            if (result.safe.status === "VERIFIED_DEPLOYED")
+              verifiedDeployments.set(deploymentId, {
+                deploymentId,
+                status: "VERIFIED_DEPLOYED",
+                review: record.review,
+              });
+          }
           return send(res, 200, { deployment: result.safe });
         }
         if (url.pathname === "/api/video/deploy/verify") {
@@ -428,7 +449,35 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
             review,
             deploymentId,
           );
+          verifiedDeployments.set(deploymentId, {
+            deploymentId,
+            status: "VERIFIED_DEPLOYED",
+            review,
+          });
           return send(res, 200, { deployment: verification });
+        }
+        if (url.pathname === "/api/video/bind/review") {
+          exactInput(input, ["deploymentId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const deployment = verifiedDeployments.get(requiredString(input.deploymentId));
+          if (!deployment) return fail(res, 409);
+          const reviewId = randomBytes(24).toString("base64url");
+          const review = await createBindingReview(deps.db, deployment, deps.projectId, reviewId);
+          bindingReviews.set(reviewId, { review, used: false });
+          return send(res, 200, { reviewId, review: review.safe });
+        }
+        if (url.pathname === "/api/video/bind/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          if (requiredString(input.confirmation) !== VIDEO_BIND_CONFIRMATION)
+            return fail(res, 400);
+          const reviewId = requiredString(input.reviewId);
+          const record = bindingReviews.get(reviewId);
+          if (!record || record.used) return fail(res, 409);
+          record.used = true;
+          const result = await applyBindingReview(deps.db, record.review, deps.projectId);
+          bindingReviews.delete(reviewId);
+          return send(res, 200, { result });
         }
         if (url.pathname === "/api/lesson/review") {
           exactInput(input, [

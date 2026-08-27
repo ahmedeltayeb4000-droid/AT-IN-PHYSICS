@@ -469,6 +469,7 @@ export async function runPreparedVideoPublication(
   db: Firestore,
   prepared: PreparedVideoPublicationPackage,
   apply: boolean,
+  expectedSessionRevisionMillis?: number,
 ): Promise<VideoDescriptorPublicationResult> {
   const preflight = await trustedPreflight(db, prepared.input);
   if (!apply) {
@@ -480,7 +481,11 @@ export async function runPreparedVideoPublication(
     };
   }
 
-  const publication = await publishEncryptedVideoMetadata(db, prepared.input);
+  const publication = await publishEncryptedVideoMetadata(
+    db,
+    prepared.input,
+    expectedSessionRevisionMillis,
+  );
   await verifyAppliedPublication(db, prepared.input, preflight.session);
   return {
     package: prepared.summary,

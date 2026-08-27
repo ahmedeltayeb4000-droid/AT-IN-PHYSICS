@@ -853,6 +853,8 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
   let deployReviewCalls = 0;
   let deployCalls = 0;
   let retryCalls = 0;
+  let bindingReviewCalls = 0;
+  let bindingApplyCalls = 0;
   const safe = {
     target: { courseId: "course", moduleId: "module", sessionId: "session" },
     videoAssetId: "session-video",
@@ -979,6 +981,35 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
         remoteVerified: true,
       };
     },
+    createBindingReview: async (_db, deployment, projectId, reviewId) => {
+      bindingReviewCalls += 1;
+      assert.equal(deployment.status, "VERIFIED_DEPLOYED");
+      return {
+        reviewId,
+        deployment,
+        revisionMillis: 100,
+        fingerprint: "7".repeat(64),
+        safe: {
+          projectId,
+          courseId: "course",
+          moduleId: "module",
+          sessionId: "session",
+          sessionTitle: "Session",
+          currentVideoState: "ABSENT",
+          videoAssetId: "session-video",
+          hostingRoute: safe.hostingRoute,
+          artifactSha256: safe.artifactSha256,
+          artifactSize: safe.encryptedSize,
+          remoteVerification: "PASSED",
+          warning: "This will write the trusted video binding to Firestore.",
+        },
+      };
+    },
+    applyBindingReview: async (_db, review, projectId) => {
+      bindingApplyCalls += 1;
+      assert.equal(review.safe.projectId, projectId);
+      return { status: "created", postApplyVerified: true, sessionId: "session", videoAssetId: "session-video", remoteVerified: true, firestoreBindingVerified: true };
+    },
   });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
@@ -1054,6 +1085,18 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
     assert.doesNotMatch(deployText, /contentKey|SECRET|credential|token/i);
     const deploymentId = JSON.parse(deployText).deployment
       .deploymentId as string;
+    const bindingReviewResponse = await postJson("/api/video/bind/review", { deploymentId });
+    assert.equal(bindingReviewResponse.status, 200);
+    const bindingReviewText = await bindingReviewResponse.text();
+    assert.doesNotMatch(bindingReviewText, /contentKey|SECRET|descriptor|ownerUid/i);
+    const bindingReviewId = JSON.parse(bindingReviewText).reviewId as string;
+    assert.equal((await postJson("/api/video/bind/apply", { reviewId: bindingReviewId, confirmation: "wrong" })).status, 400);
+    const bindingApplyResponse = await postJson("/api/video/bind/apply", { reviewId: bindingReviewId, confirmation: "BIND VERIFIED VIDEO TO SESSION" });
+    assert.equal(bindingApplyResponse.status, 200);
+    assert.doesNotMatch(await bindingApplyResponse.text(), /contentKey|SECRET|descriptor/i);
+    assert.equal((await postJson("/api/video/bind/apply", { reviewId: bindingReviewId, confirmation: "BIND VERIFIED VIDEO TO SESSION" })).status, 409);
+    assert.equal((await postJson("/api/video/bind/review", { deploymentId: "unknown" })).status, 409);
+    assert.equal((await postJson("/api/video/bind/review", { deploymentId, videoAssetId: "attacker" })).status, 400);
     assert.equal(
       (
         await postJson("/api/video/deploy/apply", {
@@ -1106,6 +1149,8 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
     assert.equal(deployReviewCalls, 1);
     assert.equal(deployCalls, 1);
     assert.equal(retryCalls, 1);
+    assert.equal(bindingReviewCalls, 1);
+    assert.equal(bindingApplyCalls, 1);
     assert.equal(
       (
         await postJson("/api/video/release", {

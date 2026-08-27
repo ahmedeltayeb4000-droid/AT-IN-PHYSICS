@@ -160,6 +160,7 @@ export function videoPublicationIsCurrent(
 export async function publishEncryptedVideoMetadata(
   db: Firestore,
   rawInput: unknown,
+  expectedSessionRevisionMillis?: number,
 ): Promise<VideoPublicationResult> {
   const input = parseVideoPublicationInput(rawInput);
   const sessionReference = db.doc(
@@ -172,6 +173,10 @@ export async function publishEncryptedVideoMetadata(
   return db.runTransaction(async (transaction) => {
     const sessionSnapshot = await transaction.get(sessionReference);
     if (!sessionSnapshot.exists) throw new Error("Session was not found.");
+    if (
+      expectedSessionRevisionMillis !== undefined &&
+      sessionSnapshot.updateTime?.toMillis() !== expectedSessionRevisionMillis
+    ) throw new Error("Session changed after video binding review.");
     const session = validateSessionForVideoPublication(sessionSnapshot.data());
 
     const accessSnapshot = await transaction.get(accessReference);
