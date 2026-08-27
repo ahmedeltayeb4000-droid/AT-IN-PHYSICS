@@ -669,6 +669,140 @@ test("owner-style Session list is denied without owner true", async () => {
   await assertFails(getDocs(collection(ownerDb(false), sessionsPath)));
 });
 
+test("owner creates only the exact trusted draft Session beneath valid parents", async () => {
+  const courseId = "session-create-course";
+  const moduleId = "session-create-module";
+  const path = `courses/${courseId}/modules/${moduleId}/sessions/introduction`;
+  await seedDocuments({
+    [`courses/${courseId}`]: courseDocument(courseId),
+    [`courses/${courseId}/modules/${moduleId}`]: {
+      title: "Module",
+      order: 0,
+    },
+  });
+  await assertSucceeds(
+    setDoc(doc(ownerDb(), path), {
+      title: "Introduction",
+      order: 0,
+      publicationStatus: "draft",
+    }),
+  );
+  const snapshot = await assertSucceeds(getDoc(doc(ownerDb(), path)));
+  assert.deepEqual(snapshot.data(), {
+    title: "Introduction",
+    order: 0,
+    publicationStatus: "draft",
+  });
+});
+
+test("Session create requires owner true and exact valid parent hierarchy", async () => {
+  const data = { title: "Session", order: 0, publicationStatus: "draft" };
+  const courseId = "session-parent-course";
+  const moduleId = "session-parent-module";
+  await seedDocuments({
+    [`courses/${courseId}`]: courseDocument(courseId),
+    [`courses/${courseId}/modules/${moduleId}`]: {
+      title: "Module",
+      order: 0,
+    },
+    "courses/malformed-session-course": {
+      ...courseDocument("malformed-session-course"),
+      extra: true,
+    },
+    "courses/malformed-session-course/modules/module": {
+      title: "Module",
+      order: 0,
+    },
+    "courses/malformed-session-module-course": courseDocument(
+      "malformed-session-module-course",
+    ),
+    "courses/malformed-session-module-course/modules/module": {
+      title: "Module",
+      order: -1,
+    },
+    "courses/other-session-course": courseDocument("other-session-course"),
+    "courses/other-session-course/modules/shared-module": {
+      title: "Module",
+      order: 0,
+    },
+  });
+  const validPath = `courses/${courseId}/modules/${moduleId}/sessions`;
+  await assertFails(
+    setDoc(doc(unauthenticatedDb(), `${validPath}/unauth`), data),
+  );
+  await assertFails(
+    setDoc(doc(authenticatedDb(CURRENT_UID), `${validPath}/student`), data),
+  );
+  await assertFails(
+    setDoc(doc(ownerDb(false), `${validPath}/false-owner`), data),
+  );
+  for (const path of [
+    "courses/missing-session-course/modules/module/sessions/session",
+    "courses/malformed-session-course/modules/module/sessions/session",
+    "courses/session-parent-course/modules/missing-module/sessions/session",
+    "courses/malformed-session-module-course/modules/module/sessions/session",
+    "courses/session-parent-course/modules/shared-module/sessions/session",
+  ]) {
+    await assertFails(setDoc(doc(ownerDb(), path), data));
+  }
+});
+
+test("Session create rejects publication, optional fields, extras, and malformed input", async () => {
+  const courseId = "session-schema-course";
+  const moduleId = "session-schema-module";
+  const basePath = `courses/${courseId}/modules/${moduleId}/sessions`;
+  const valid = { title: "Session", order: 0, publicationStatus: "draft" };
+  await seedDocuments({
+    [`courses/${courseId}`]: courseDocument(courseId),
+    [`courses/${courseId}/modules/${moduleId}`]: {
+      title: "Module",
+      order: 0,
+    },
+  });
+  const invalidDocuments = [
+    { title: "Session", order: 0 },
+    { ...valid, publicationStatus: "published" },
+    { ...valid, publicationStatus: "preview" },
+    { ...valid, extra: true },
+    { ...valid, lessonText: "Injected" },
+    { ...valid, releaseAt: Timestamp.now() },
+    { ...valid, videoAssetId: "video" },
+    { ...valid, contentKey: VIDEO_CONTENT_KEY },
+    { ...valid, path: "enrollments/target", owner: true },
+    { ...valid, title: "" },
+    { ...valid, title: " Trimmed" },
+    { ...valid, title: "Bad\u0000Title" },
+    { ...valid, title: "a".repeat(161) },
+    { ...valid, order: -1 },
+    { ...valid, order: 1.5 },
+    { ...valid, order: Number.MAX_SAFE_INTEGER + 1 },
+  ];
+  for (const [index, data] of invalidDocuments.entries()) {
+    await assertFails(
+      setDoc(doc(ownerDb(), `${basePath}/invalid-${index}`), data),
+    );
+  }
+  await assertFails(setDoc(doc(ownerDb(), `${basePath}/Invalid`), valid));
+});
+
+test("owner cannot overwrite, update, delete, or publish an existing Session", async () => {
+  const path = "courses/mechanics/modules/motion/sessions/existing-draft";
+  await seedDocuments({
+    [path]: { title: "Existing", order: 0, publicationStatus: "draft" },
+  });
+  await assertFails(
+    setDoc(doc(ownerDb(), path), {
+      title: "Changed",
+      order: 1,
+      publicationStatus: "draft",
+    }),
+  );
+  await assertFails(
+    updateDoc(doc(ownerDb(), path), { publicationStatus: "published" }),
+  );
+  await assertFails(deleteDoc(doc(ownerDb(), path)));
+});
+
 test("authenticated student without Enrollment cannot read a Module", async () => {
   const path = "courses/mechanics/modules/motion";
   await seedDocuments({ [path]: { title: "Motion", order: 1 } });

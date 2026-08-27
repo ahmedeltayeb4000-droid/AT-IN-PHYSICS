@@ -492,6 +492,142 @@ test("admin Session UI scopes selection and renders only safe inventory states",
   assert.doesNotMatch(page, /sessions\.error\.message|sessions\.error\.stack/);
 });
 
+test("Session creation builder forces the exact trusted draft document", async () => {
+  const { buildAdminSessionCreation } =
+    await import("../src/features/admin/adminSessionCreationValidation.ts");
+  assert.deepEqual(
+    buildAdminSessionCreation({
+      courseId: "mechanics",
+      moduleId: "motion",
+      sessionId: "introduction",
+      title: "Introduction",
+      order: "0",
+      publicationStatus: "published",
+      lessonText: "Injected",
+      releaseAt: "2030-01-01",
+      videoAssetId: "video",
+      path: "enrollments/target",
+    }),
+    {
+      courseId: "mechanics",
+      moduleId: "motion",
+      sessionId: "introduction",
+      document: {
+        title: "Introduction",
+        order: 0,
+        publicationStatus: "draft",
+      },
+    },
+  );
+});
+
+test("Session creation validation matches trusted ID, title, and order rules", async () => {
+  const { buildAdminSessionCreation } =
+    await import("../src/features/admin/adminSessionCreationValidation.ts");
+  for (const input of [
+    {
+      courseId: "Unsafe",
+      moduleId: "module",
+      sessionId: "session",
+      title: "Title",
+      order: "0",
+    },
+    {
+      courseId: "course",
+      moduleId: "../module",
+      sessionId: "session",
+      title: "Title",
+      order: "0",
+    },
+    {
+      courseId: "course",
+      moduleId: "module",
+      sessionId: "Session",
+      title: "Title",
+      order: "0",
+    },
+    {
+      courseId: "course",
+      moduleId: "module",
+      sessionId: "session",
+      title: " Title",
+      order: "0",
+    },
+    {
+      courseId: "course",
+      moduleId: "module",
+      sessionId: "session",
+      title: "Bad\u0000Title",
+      order: "0",
+    },
+    {
+      courseId: "course",
+      moduleId: "module",
+      sessionId: "session",
+      title: "Title",
+      order: "01",
+    },
+    {
+      courseId: "course",
+      moduleId: "module",
+      sessionId: "session",
+      title: "Title",
+      order: "1e2",
+    },
+    {
+      courseId: "course",
+      moduleId: "module",
+      sessionId: "session",
+      title: "Title",
+      order: "9007199254740992",
+    },
+  ]) {
+    assert.throws(() => buildAdminSessionCreation(input));
+  }
+});
+
+test("Session creation repository is fixed-path create-only and sanitizes conflicts", async () => {
+  const repository = await source(
+    "../src/features/admin/adminSessionCreation.ts",
+  );
+  assert.match(
+    repository,
+    /"courses"[\s\S]*proposal\.courseId[\s\S]*"modules"[\s\S]*proposal\.moduleId[\s\S]*"sessions"[\s\S]*proposal\.sessionId/,
+  );
+  assert.match(repository, /runTransaction/);
+  assert.match(repository, /transaction\.get/);
+  assert.match(repository, /AdminSessionCreationError\("conflict"\)/);
+  assert.match(
+    repository,
+    /transaction\.set\(reference,\s*proposal\.document\)/,
+  );
+  assert.doesNotMatch(
+    repository,
+    /updateDoc|deleteDoc|addDoc|merge\s*:|collection\(/,
+  );
+});
+
+test("Session creation UI blocks duplicates and refreshes the exact inventory", async () => {
+  const page = await source("../src/pages/admin/AdminCoursesPage.tsx");
+  assert.match(page, /Create Session/);
+  assert.match(page, /label="Session ID"/);
+  assert.match(page, /label="Session Title"/);
+  assert.match(page, /label="Session Order"/);
+  assert.match(page, /if \(sessionCreation\.isPending\) return/);
+  assert.match(page, /sessionCreation\.isPending/);
+  assert.match(page, /A Session with this ID already exists/);
+  assert.match(page, /Session created successfully as a draft/);
+  assert.match(
+    page,
+    /sessionCreation[\s\S]*onSuccess:\s*async[\s\S]*invalidateQueries\([\s\S]*moduleCourseId[\s\S]*selectedModuleId[\s\S]*"sessions"[\s\S]*"inventory"/,
+  );
+  assert.doesNotMatch(
+    page,
+    /sessionCreation\.error\.message|sessionCreation\.error\.stack/,
+  );
+  assert.doesNotMatch(page, /Publish Session|Edit Session|Delete Session/);
+});
+
 test("admin frontend introduces no update, delete, random-ID, or privileged SDK API", async () => {
   const paths = [
     "../src/pages/admin/AdminLayout.tsx",
@@ -507,6 +643,8 @@ test("admin frontend introduces no update, delete, random-ID, or privileged SDK 
     "../src/features/admin/adminModuleMapper.ts",
     "../src/features/admin/adminSessionRepository.ts",
     "../src/features/admin/adminSessionMapper.ts",
+    "../src/features/admin/adminSessionCreation.ts",
+    "../src/features/admin/adminSessionCreationValidation.ts",
     "../src/features/auth/AuthProvider.tsx",
     "../src/features/auth/AuthGuards.tsx",
   ];

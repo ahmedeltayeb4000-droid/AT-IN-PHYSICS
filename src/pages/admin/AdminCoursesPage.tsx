@@ -23,6 +23,11 @@ import {
   AdminSessionInventoryError,
   getAdminSessions,
 } from "../../features/admin/adminSessionRepository";
+import {
+  AdminSessionCreationError,
+  createAdminSession,
+} from "../../features/admin/adminSessionCreation";
+import { buildAdminSessionCreation } from "../../features/admin/adminSessionCreationValidation";
 
 export function AdminCoursesPage() {
   const queryClient = useQueryClient();
@@ -39,6 +44,15 @@ export function AdminCoursesPage() {
   const [moduleOrder, setModuleOrder] = useState("0");
   const [moduleSuccess, setModuleSuccess] = useState(false);
   const [selectedModuleId, setSelectedModuleId] = useState("");
+  const [sessionId, setSessionId] = useState("");
+  const [sessionTitle, setSessionTitle] = useState("");
+  const [sessionOrder, setSessionOrder] = useState("0");
+  const [sessionSuccess, setSessionSuccess] = useState(false);
+  const [sessionFieldErrors, setSessionFieldErrors] = useState<
+    Partial<
+      Record<"courseId" | "moduleId" | "sessionId" | "title" | "order", string>
+    >
+  >({});
   const [moduleFieldErrors, setModuleFieldErrors] = useState<
     Partial<Record<"courseId" | "moduleId" | "title" | "order", string>>
   >({});
@@ -64,6 +78,75 @@ export function AdminCoursesPage() {
     queryFn: () => getAdminSessions(moduleCourseId, selectedModuleId),
     enabled: moduleCourseId !== "" && selectedModuleId !== "",
   });
+  const sessionCreation = useMutation({
+    mutationFn: createAdminSession,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: [
+          "admin",
+          "courses",
+          moduleCourseId,
+          "modules",
+          selectedModuleId,
+          "sessions",
+          "inventory",
+        ],
+      });
+      setSessionId("");
+      setSessionTitle("");
+      setSessionOrder("0");
+      setSessionSuccess(true);
+    },
+  });
+  const submitSession = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (sessionCreation.isPending) return;
+    setSessionSuccess(false);
+    setSessionFieldErrors({});
+    try {
+      buildAdminSessionCreation({
+        courseId: moduleCourseId,
+        moduleId: selectedModuleId,
+        sessionId,
+        title: sessionTitle,
+        order: sessionOrder,
+      });
+    } catch (cause) {
+      if (
+        cause instanceof AdminSessionCreationError &&
+        cause.code === "validation" &&
+        cause.field
+      ) {
+        setSessionFieldErrors({
+          [cause.field]:
+            cause.field === "order"
+              ? "Enter a nonnegative whole number."
+              : cause.field === "title"
+                ? "Enter valid text without surrounding whitespace or control characters."
+                : "Select the Course and Module and use a canonical Session ID.",
+        });
+        return;
+      }
+    }
+    sessionCreation.mutate({
+      courseId: moduleCourseId,
+      moduleId: selectedModuleId,
+      sessionId,
+      title: sessionTitle,
+      order: sessionOrder,
+    });
+  };
+  const sessionCreationErrorMessage = sessionCreation.isError
+    ? sessionCreation.error instanceof AdminSessionCreationError
+      ? {
+          conflict:
+            "A Session with this ID already exists in the selected Module.",
+          validation: "Check the Session ID, title, and order.",
+          unauthorized: "Owner authorization is required to create a Session.",
+          service: "Unable to create the Session. Please try again.",
+        }[sessionCreation.error.code]
+      : "Unable to create the Session. Please try again."
+    : null;
   const creation = useMutation({
     mutationFn: createAdminCourse,
     onSuccess: async () => {
@@ -244,6 +327,11 @@ export function AdminCoursesPage() {
             onChange={(event) => {
               setModuleCourseId(event.target.value);
               setSelectedModuleId("");
+              setSessionId("");
+              setSessionTitle("");
+              setSessionOrder("0");
+              setSessionSuccess(false);
+              setSessionFieldErrors({});
             }}
             disabled={moduleCreation.isPending || courses.isPending}
             error={moduleFieldErrors.courseId}
@@ -366,7 +454,14 @@ export function AdminCoursesPage() {
           <Select
             label="Module"
             value={selectedModuleId}
-            onChange={(event) => setSelectedModuleId(event.target.value)}
+            onChange={(event) => {
+              setSelectedModuleId(event.target.value);
+              setSessionId("");
+              setSessionTitle("");
+              setSessionOrder("0");
+              setSessionSuccess(false);
+              setSessionFieldErrors({});
+            }}
           >
             <option value="">Select a Module</option>
             {modules.data.map((module) => (
@@ -376,6 +471,59 @@ export function AdminCoursesPage() {
             ))}
           </Select>
         )}
+        {moduleCourseId && selectedModuleId ? (
+          <form className="mt-5 grid gap-4" onSubmit={submitSession} noValidate>
+            <h4 className="font-bold text-text">Create Session</h4>
+            <p className="text-sm text-text-muted">
+              New Sessions are created as drafts without lesson or video
+              content.
+            </p>
+            <Input
+              label="Session ID"
+              value={sessionId}
+              onChange={(event) => setSessionId(event.target.value)}
+              disabled={sessionCreation.isPending}
+              error={sessionFieldErrors.sessionId}
+              required
+              maxLength={128}
+              autoComplete="off"
+            />
+            <Input
+              label="Session Title"
+              value={sessionTitle}
+              onChange={(event) => setSessionTitle(event.target.value)}
+              disabled={sessionCreation.isPending}
+              error={sessionFieldErrors.title}
+              required
+            />
+            <Input
+              label="Session Order"
+              value={sessionOrder}
+              onChange={(event) => setSessionOrder(event.target.value)}
+              disabled={sessionCreation.isPending}
+              error={sessionFieldErrors.order}
+              required
+              inputMode="numeric"
+            />
+            <div>
+              <Button type="submit" isLoading={sessionCreation.isPending}>
+                {sessionCreation.isPending
+                  ? "Creating Session..."
+                  : "Create Session"}
+              </Button>
+            </div>
+            {sessionCreationErrorMessage ? (
+              <p className="text-sm text-danger" role="alert">
+                {sessionCreationErrorMessage}
+              </p>
+            ) : null}
+            {sessionSuccess ? (
+              <p className="text-sm text-success" role="status">
+                Session created successfully as a draft.
+              </p>
+            ) : null}
+          </form>
+        ) : null}
         {moduleCourseId && !selectedModuleId ? (
           <p className="mt-3 text-sm text-text-muted">
             Select a Module to view its Sessions.

@@ -74,16 +74,38 @@ service cloud.firestore {
 
     function isValidCreatedModule(courseId, moduleId) {
       let coursePath = /databases/$(database)/documents/courses/$(courseId);
-      let data = request.resource.data;
-      return isValidCourseId(moduleId)
-        && exists(coursePath)
+      return exists(coursePath)
         && isValidCourseData(courseId, get(coursePath).data)
+        && isValidModuleData(moduleId, request.resource.data);
+    }
+
+    function isValidModuleData(moduleId, data) {
+      return isValidCourseId(moduleId)
         && data.keys().hasAll(["title", "order"])
         && data.keys().hasOnly(["title", "order"])
         && isValidCourseText(data.title, 160)
         && data.order is int
         && data.order >= 0
         && data.order <= 9007199254740991;
+    }
+
+    function isValidCreatedSession(courseId, moduleId, sessionId) {
+      let coursePath = /databases/$(database)/documents/courses/$(courseId);
+      let modulePath = /databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId);
+      let data = request.resource.data;
+      return isValidCourseId(sessionId)
+        && exists(coursePath)
+        && isValidCourseData(courseId, get(coursePath).data)
+        && exists(modulePath)
+        && isValidModuleData(moduleId, get(modulePath).data)
+        && data.keys().hasAll(["title", "order"])
+        && data.keys().hasAll(["publicationStatus"])
+        && data.keys().hasOnly(["title", "order", "publicationStatus"])
+        && isValidCourseText(data.title, 160)
+        && data.order is int
+        && data.order >= 0
+        && data.order <= 9007199254740991
+        && data.publicationStatus == "draft";
     }
 
     function isSessionVisible(sessionData) {
@@ -155,6 +177,9 @@ service cloud.firestore {
               && isSessionVisible(resource.data)
             ) || isOwner();
           allow list: if isOwner();
+          allow create: if isOwner()
+            && isValidCreatedSession(courseId, moduleId, sessionId);
+          allow update, delete: if false;
 
           match /videoAccess/{accessId} {
             allow get: if accessId == "primary"
