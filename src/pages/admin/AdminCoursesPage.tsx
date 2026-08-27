@@ -19,6 +19,10 @@ import {
   AdminModuleInventoryError,
   getAdminModules,
 } from "../../features/admin/adminModuleRepository";
+import {
+  AdminSessionInventoryError,
+  getAdminSessions,
+} from "../../features/admin/adminSessionRepository";
 
 export function AdminCoursesPage() {
   const queryClient = useQueryClient();
@@ -34,6 +38,7 @@ export function AdminCoursesPage() {
   const [moduleTitle, setModuleTitle] = useState("");
   const [moduleOrder, setModuleOrder] = useState("0");
   const [moduleSuccess, setModuleSuccess] = useState(false);
+  const [selectedModuleId, setSelectedModuleId] = useState("");
   const [moduleFieldErrors, setModuleFieldErrors] = useState<
     Partial<Record<"courseId" | "moduleId" | "title" | "order", string>>
   >({});
@@ -45,6 +50,19 @@ export function AdminCoursesPage() {
     queryKey: ["admin", "courses", moduleCourseId, "modules", "inventory"],
     queryFn: () => getAdminModules(moduleCourseId),
     enabled: moduleCourseId !== "",
+  });
+  const sessions = useQuery({
+    queryKey: [
+      "admin",
+      "courses",
+      moduleCourseId,
+      "modules",
+      selectedModuleId,
+      "sessions",
+      "inventory",
+    ],
+    queryFn: () => getAdminSessions(moduleCourseId, selectedModuleId),
+    enabled: moduleCourseId !== "" && selectedModuleId !== "",
   });
   const creation = useMutation({
     mutationFn: createAdminCourse,
@@ -223,7 +241,10 @@ export function AdminCoursesPage() {
           <Select
             label="Course"
             value={moduleCourseId}
-            onChange={(event) => setModuleCourseId(event.target.value)}
+            onChange={(event) => {
+              setModuleCourseId(event.target.value);
+              setSelectedModuleId("");
+            }}
             disabled={moduleCreation.isPending || courses.isPending}
             error={moduleFieldErrors.courseId}
             required
@@ -326,6 +347,96 @@ export function AdminCoursesPage() {
             ))}
           </ul>
         )}
+      </GlassCard>
+      <GlassCard className="mt-6 p-6">
+        <h3 className="text-lg font-bold text-text">Sessions</h3>
+        {!moduleCourseId ? (
+          <p className="mt-3 text-sm text-text-muted">
+            Select a Course before viewing Sessions.
+          </p>
+        ) : modules.isPending ? (
+          <p className="mt-3 text-sm text-text-muted" role="status">
+            Loading Modules...
+          </p>
+        ) : modules.isError ? (
+          <p className="mt-3 text-sm text-danger" role="alert">
+            Modules must be available before Sessions can be loaded.
+          </p>
+        ) : (
+          <Select
+            label="Module"
+            value={selectedModuleId}
+            onChange={(event) => setSelectedModuleId(event.target.value)}
+          >
+            <option value="">Select a Module</option>
+            {modules.data.map((module) => (
+              <option key={module.id} value={module.id}>
+                {module.title} ({module.id})
+              </option>
+            ))}
+          </Select>
+        )}
+        {moduleCourseId && !selectedModuleId ? (
+          <p className="mt-3 text-sm text-text-muted">
+            Select a Module to view its Sessions.
+          </p>
+        ) : !selectedModuleId ? null : sessions.isPending ? (
+          <p className="mt-3 text-sm text-text-muted" role="status">
+            Loading Sessions...
+          </p>
+        ) : sessions.isError ? (
+          <div className="mt-3" role="alert">
+            <p className="font-bold text-text">Unable to load Sessions</p>
+            <p className="mt-1 text-sm text-text-muted">
+              {sessions.error instanceof AdminSessionInventoryError &&
+              sessions.error.code === "unauthorized"
+                ? "Owner authorization is required to view Sessions."
+                : sessions.error instanceof AdminSessionInventoryError &&
+                    sessions.error.code === "malformed"
+                  ? "Session inventory data is malformed."
+                  : "The Session inventory service is unavailable. Please try again."}
+            </p>
+          </div>
+        ) : selectedModuleId && sessions.data.length === 0 ? (
+          <p className="mt-3 text-sm text-text-muted">No Sessions</p>
+        ) : selectedModuleId ? (
+          <ul className="mt-4 grid gap-3" aria-label="Session inventory">
+            {sessions.data.map((session) => (
+              <li
+                key={session.id}
+                className="rounded-lg border border-border bg-panel/50 p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h4 className="font-bold text-text">{session.title}</h4>
+                    <p className="mt-1 font-mono text-xs text-text-muted">
+                      {session.id}
+                    </p>
+                  </div>
+                  <Badge
+                    tone={
+                      session.publicationStatus === "published"
+                        ? "success"
+                        : "neutral"
+                    }
+                  >
+                    {session.publicationStatus === "published"
+                      ? "Published"
+                      : "Draft"}
+                  </Badge>
+                </div>
+                <p className="mt-3 text-sm text-text-muted">
+                  Order {session.order} · Lesson{" "}
+                  {session.hasLessonText ? "Yes" : "No"} · Video{" "}
+                  {session.hasVideo ? "Yes" : "No"}
+                </p>
+                <p className="mt-1 text-sm text-text-muted">
+                  Release: {session.releaseAt ?? "Immediate when published"}
+                </p>
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </GlassCard>
       {courses.isPending ? (
         <div

@@ -380,6 +380,118 @@ test("successful Module creation refreshes only the selected Course inventory", 
   );
 });
 
+test("admin Session mapper returns sanitized metadata and validates known schema", async () => {
+  const { Timestamp } = await import("firebase/firestore");
+  const { mapAdminSessionDocument } =
+    await import("../src/features/admin/adminSessionMapper.ts");
+  const releaseAt = Timestamp.fromDate(new Date("2030-01-01T00:00:00.000Z"));
+  assert.deepEqual(
+    mapAdminSessionDocument("introduction", "mechanics", "motion", {
+      title: "Introduction",
+      order: 1,
+      publicationStatus: "published",
+      releaseAt,
+      lessonText: "Protected lesson.",
+      videoAssetId: "motion-video",
+      futureOptionalField: "preserved-by-established-contract",
+    }),
+    {
+      id: "introduction",
+      title: "Introduction",
+      order: 1,
+      publicationStatus: "published",
+      releaseAt: "2030-01-01T00:00:00.000Z",
+      hasLessonText: true,
+      hasVideo: true,
+    },
+  );
+  for (const [id, value] of [
+    ["Unsafe/Path", { title: "Session", order: 0, publicationStatus: "draft" }],
+    ["session", { title: "", order: 0, publicationStatus: "draft" }],
+    ["session", { title: "Session", order: -1, publicationStatus: "draft" }],
+    ["session", { title: "Session", order: 0, publicationStatus: "preview" }],
+    [
+      "session",
+      {
+        title: "Session",
+        order: 0,
+        publicationStatus: "draft",
+        releaseAt: null,
+      },
+    ],
+    [
+      "session",
+      {
+        title: "Session",
+        order: 0,
+        publicationStatus: "draft",
+        lessonText: " trimmed ",
+      },
+    ],
+    [
+      "session",
+      {
+        title: "Session",
+        order: 0,
+        publicationStatus: "draft",
+        videoAssetId: "INVALID",
+      },
+    ],
+  ]) {
+    assert.throws(() =>
+      mapAdminSessionDocument(id, "mechanics", "motion", value),
+    );
+  }
+});
+
+test("admin Session repository is fixed-path, read-only, isolated, and deterministic", async () => {
+  const repository = await source(
+    "../src/features/admin/adminSessionRepository.ts",
+  );
+  assert.match(repository, /isCanonicalAdminModuleId\(courseId\)/);
+  assert.match(repository, /isCanonicalAdminModuleId\(moduleId\)/);
+  assert.match(
+    repository,
+    /collection\([\s\S]*firebaseDb[\s\S]*"courses"[\s\S]*courseId[\s\S]*"modules"[\s\S]*moduleId[\s\S]*"sessions"/,
+  );
+  assert.match(repository, /mapAdminSessionDocument/);
+  assert.match(repository, /left\.order\s*-\s*right\.order/);
+  assert.match(repository, /left\.id\s*<\s*right\.id/);
+  assert.doesNotMatch(repository, /sessionDiscovery|videoAccess/);
+  assert.doesNotMatch(
+    repository,
+    /\b(?:setDoc|updateDoc|addDoc|deleteDoc|runTransaction|writeBatch)\b/,
+  );
+});
+
+test("admin Session UI scopes selection and renders only safe inventory states", async () => {
+  const page = await source("../src/pages/admin/AdminCoursesPage.tsx");
+  assert.match(page, /getAdminSessions\(moduleCourseId,\s*selectedModuleId\)/);
+  assert.match(
+    page,
+    /setModuleCourseId\(event\.target\.value\)[\s\S]*setSelectedModuleId\(""\)/,
+  );
+  assert.match(
+    page,
+    /enabled:[\s\S]*moduleCourseId\s*!==\s*""[\s\S]*selectedModuleId\s*!==\s*""/,
+  );
+  assert.match(page, /Select a Course before viewing Sessions/);
+  assert.match(page, /Select a Module to view its Sessions/);
+  assert.match(page, /Loading Sessions/);
+  assert.match(page, /No Sessions/);
+  assert.match(page, /Unable to load Sessions/);
+  assert.match(page, /Session inventory data is malformed/);
+  assert.match(page, /session\.hasLessonText/);
+  assert.match(page, /session\.hasVideo/);
+  assert.match(page, /session\.releaseAt/);
+  assert.doesNotMatch(page, /session\.lessonText|session\.videoAssetId/);
+  assert.doesNotMatch(
+    page,
+    /Edit Session|Delete Session|Publish Session|Upload Video|Edit Lesson/,
+  );
+  assert.doesNotMatch(page, /sessions\.error\.message|sessions\.error\.stack/);
+});
+
 test("admin frontend introduces no update, delete, random-ID, or privileged SDK API", async () => {
   const paths = [
     "../src/pages/admin/AdminLayout.tsx",
@@ -393,6 +505,8 @@ test("admin frontend introduces no update, delete, random-ID, or privileged SDK 
     "../src/features/admin/adminModuleCreationValidation.ts",
     "../src/features/admin/adminModuleRepository.ts",
     "../src/features/admin/adminModuleMapper.ts",
+    "../src/features/admin/adminSessionRepository.ts",
+    "../src/features/admin/adminSessionMapper.ts",
     "../src/features/auth/AuthProvider.tsx",
     "../src/features/auth/AuthGuards.tsx",
   ];

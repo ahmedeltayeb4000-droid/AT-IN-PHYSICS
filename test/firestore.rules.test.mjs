@@ -565,7 +565,7 @@ test("owner Module writes remain create-only while inventory listing succeeds", 
   );
 });
 
-test("owner exact Module get grants no Session or videoAccess privilege", async () => {
+test("owner Session get does not grant videoAccess privilege", async () => {
   const modulePath = "courses/mechanics/modules/motion";
   const sessionPath = `${modulePath}/sessions/introduction`;
   const accessPath = `${sessionPath}/videoAccess/primary`;
@@ -575,7 +575,7 @@ test("owner exact Module get grants no Session or videoAccess privilege", async 
     [accessPath]: videoAccess(),
   });
   await assertSucceeds(getDoc(doc(ownerDb(), modulePath)));
-  await assertFails(getDoc(doc(ownerDb(), sessionPath)));
+  await assertSucceeds(getDoc(doc(ownerDb(), sessionPath)));
   await assertFails(getDoc(doc(ownerDb(), accessPath)));
   await assertFails(
     setDoc(doc(ownerDb(), "courses/mechanics/modules/other"), {
@@ -583,6 +583,90 @@ test("owner exact Module get grants no Session or videoAccess privilege", async 
       order: 2,
     }),
   );
+});
+
+test("owner lists draft and published Sessions only beneath the exact Module", async () => {
+  const selectedPath = "courses/mechanics/modules/motion/sessions";
+  await seedDocuments({
+    [`${selectedPath}/draft-session`]: {
+      title: "Draft Session",
+      order: 2,
+      publicationStatus: "draft",
+    },
+    [`${selectedPath}/published-session`]: {
+      title: "Published Session",
+      order: 1,
+      publicationStatus: "published",
+    },
+    "courses/mechanics/modules/forces/sessions/other-module-session": {
+      title: "Other Module",
+      order: 0,
+      publicationStatus: "draft",
+    },
+    "courses/thermodynamics/modules/heat/sessions/other-course-session": {
+      title: "Other Course",
+      order: 0,
+      publicationStatus: "draft",
+    },
+  });
+  const snapshot = await assertSucceeds(
+    getDocs(collection(ownerDb(), selectedPath)),
+  );
+  assert.deepEqual(snapshot.docs.map(({ id }) => id).sort(), [
+    "draft-session",
+    "published-session",
+  ]);
+});
+
+test("owner Session inventory does not grant writes or adjacent reads", async () => {
+  const sessionPath = "courses/mechanics/modules/motion/sessions/inventory";
+  const discoveryPath =
+    "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  await seedDocuments({
+    [sessionPath]: {
+      title: "Inventory",
+      order: 0,
+      publicationStatus: "draft",
+    },
+    [discoveryPath]: { sessionIds: [] },
+    [`${sessionPath}/videoAccess/primary`]: videoAccess(),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  const owner = ownerDb();
+  await assertFails(
+    setDoc(doc(owner, `${sessionPath}-new`), {
+      title: "New",
+      order: 1,
+      publicationStatus: "draft",
+    }),
+  );
+  await assertFails(updateDoc(doc(owner, sessionPath), { title: "Changed" }));
+  await assertFails(deleteDoc(doc(owner, sessionPath)));
+  await assertFails(getDoc(doc(owner, discoveryPath)));
+  await assertFails(
+    getDocs(
+      collection(owner, "courses/mechanics/modules/motion/sessionDiscovery"),
+    ),
+  );
+  await assertFails(getDoc(doc(owner, `${sessionPath}/videoAccess/primary`)));
+  await assertFails(getDoc(doc(owner, `enrollments/${CURRENT_UID}_mechanics`)));
+});
+
+test("owner-style Session list is denied without owner true", async () => {
+  const sessionsPath = "courses/mechanics/modules/motion/sessions";
+  await seedDocuments({
+    [`${sessionsPath}/draft`]: {
+      title: "Draft",
+      order: 0,
+      publicationStatus: "draft",
+    },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  await assertFails(getDocs(collection(unauthenticatedDb(), sessionsPath)));
+  await assertFails(
+    getDocs(collection(authenticatedDb(CURRENT_UID), sessionsPath)),
+  );
+  await assertFails(getDocs(collection(ownerDb(false), sessionsPath)));
 });
 
 test("authenticated student without Enrollment cannot read a Module", async () => {
@@ -981,7 +1065,7 @@ test("expired and revoked Enrollments retain Module-list denial", async () => {
   );
 });
 
-test("owner Module inventory permission is isolated from nested and Enrollment reads", async () => {
+test("owner Course hierarchy inventories remain isolated from protected reads", async () => {
   const modulePath = "courses/mechanics/modules/motion";
   const sessionPath = `${modulePath}/sessions/introduction`;
   const discoveryPath = `${modulePath}/sessionDiscovery/visible`;
@@ -994,8 +1078,8 @@ test("owner Module inventory permission is isolated from nested and Enrollment r
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
   });
   const owner = ownerDb();
-  await assertFails(getDoc(doc(owner, sessionPath)));
-  await assertFails(getDocs(collection(owner, `${modulePath}/sessions`)));
+  await assertSucceeds(getDoc(doc(owner, sessionPath)));
+  await assertSucceeds(getDocs(collection(owner, `${modulePath}/sessions`)));
   await assertFails(getDoc(doc(owner, discoveryPath)));
   await assertFails(
     getDocs(collection(owner, `${modulePath}/sessionDiscovery`)),

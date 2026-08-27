@@ -150,8 +150,11 @@ service cloud.firestore {
         }
 
         match /sessions/{sessionId} {
-          allow get: if canReadCourseContent(courseId)
-            && isSessionVisible(resource.data);
+          allow get: if (
+              canReadCourseContent(courseId)
+              && isSessionVisible(resource.data)
+            ) || isOwner();
+          allow list: if isOwner();
 
           match /videoAccess/{accessId} {
             allow get: if accessId == "primary"
