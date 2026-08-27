@@ -7,6 +7,7 @@
     "source": "functions"
   },
   "hosting": {
+    "target": "production",
     "public": "hosting-release",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "headers": [

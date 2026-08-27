@@ -82,6 +82,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "firebase-admin": "^14.3.0",
+    "firebase-tools": "15.28.1",
     "oxlint": "^1.71.0",
     "prettier": "^3.9.5",
     "tailwindcss": "^4.3.3",

@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "at-in-physics"
+  },
+  "targets": {
+    "at-in-physics": {
+      "hosting": {
+        "production": [
+          "at-in-physics"
+        ]
+      }
+    }
+  }
+}

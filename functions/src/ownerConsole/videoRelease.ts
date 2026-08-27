@@ -34,6 +34,15 @@ type PreflightReport = Readonly<{
   quota: Readonly<{
     actualRemainingMonthlyTransferIsLocallyKnowable: boolean;
   }>;
+  deployment: Readonly<{
+    firebaseToolsVersion: string;
+    projectId: string;
+    hostingTarget: string;
+    hostingSite: string;
+    deploySource: string;
+    repositoryLocalCli: boolean;
+    shellRequired: boolean;
+  }>;
   files: PreflightEntry[];
   outcome: string;
 }>;
@@ -248,6 +257,10 @@ export async function preflightOwnerHostingRelease(
       "Firebase Hosting no-cost quotas are limited; remaining monthly transfer cannot be proven locally.",
     remainingMonthlyTransferKnown:
       report.quota.actualRemainingMonthlyTransferIsLocallyKnowable,
-    state: "PREFLIGHT_PASSED_NOT_DEPLOYED" as const,
+    firebaseToolsVersion: report.deployment.firebaseToolsVersion,
+    hostingTarget: report.deployment.hostingTarget,
+    hostingSite: report.deployment.hostingSite,
+    deploySource: report.deployment.deploySource,
+    state: "READY_FOR_DEPLOYMENT_REVIEW_NOT_DEPLOYED" as const,
   };
 }

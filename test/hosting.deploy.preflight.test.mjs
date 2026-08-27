@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 import {
@@ -23,6 +24,16 @@ import {
   validateHostingConfiguration,
   validateHostingQuota,
 } from "../scripts/hosting/deployPreflight.mjs";
+import {
+  futureHostingOnlyDeployArgs,
+  PINNED_FIREBASE_TOOLS_VERSION,
+  PRODUCTION_FIREBASE_PROJECT,
+  PRODUCTION_HOSTING_SITE,
+  PRODUCTION_HOSTING_TARGET,
+  resolvePinnedFirebaseCli,
+  validateFirebaseRc,
+  validatePinnedFirebaseDependency,
+} from "../scripts/hosting/deploymentConfig.mjs";
 
 const execFileAsync = promisify(execFile);
 const COMMIT = "a".repeat(40);
@@ -42,6 +53,7 @@ async function fixture(root, index = "<!doctype html><title>safe</title>") {
   const releaseRoot = join(root, "hosting-release");
   const reportRoot = join(root, "hosting-deploy-preflight");
   const firebaseConfigPath = join(root, "firebase.json");
+  const firebaseRcPath = join(root, ".firebaserc");
   await mkdir(join(releaseRoot, "assets"), { recursive: true });
   await writeFile(join(releaseRoot, "index.html"), index);
   await writeFile(join(releaseRoot, "assets", "app.js"), "console.log('safe')");
@@ -49,6 +61,7 @@ async function fixture(root, index = "<!doctype html><title>safe</title>") {
     firebaseConfigPath,
     JSON.stringify({
       hosting: {
+        target: "production",
         public: "hosting-release",
         rewrites: [
           { source: "!/@(protected-media)/**", destination: "/index.html" },
@@ -56,7 +69,16 @@ async function fixture(root, index = "<!doctype html><title>safe</title>") {
       },
     }),
   );
-  return { releaseRoot, reportRoot, firebaseConfigPath };
+  await writeFile(
+    firebaseRcPath,
+    JSON.stringify({
+      projects: { default: "at-in-physics" },
+      targets: {
+        "at-in-physics": { hosting: { production: ["at-in-physics"] } },
+      },
+    }),
+  );
+  return { releaseRoot, reportRoot, firebaseConfigPath, firebaseRcPath };
 }
 
 function options(paths, overrides = {}) {
@@ -65,6 +87,10 @@ function options(paths, overrides = {}) {
     expectedProjectId: "at-in-physics",
     environment: {},
     gitInspector: CLEAN_GIT,
+    cliResolver: async () => ({
+      version: PINNED_FIREBASE_TOOLS_VERSION,
+      shell: false,
+    }),
     now: NOW,
     ...paths,
     ...overrides,
@@ -80,6 +106,15 @@ test("clean release produces a complete deterministic local report", async () =>
     assert.equal(result.report.summary.fileCount, 2);
     assert.equal(result.report.summary.protectedMediaBytes, 0);
     assert.equal(result.report.summary.atv1Count, 0);
+    assert.deepEqual(result.report.deployment, {
+      firebaseToolsVersion: "15.28.1",
+      projectId: "at-in-physics",
+      hostingTarget: "production",
+      hostingSite: "at-in-physics",
+      deploySource: "hosting-release",
+      repositoryLocalCli: true,
+      shellRequired: false,
+    });
     assert.equal(
       result.report.quota.actualRemainingMonthlyTransferIsLocallyKnowable,
       false,
@@ -125,6 +160,20 @@ test("missing, wrong, and conflicting project targets fail closed", () => {
     /differs/,
   );
 });
+
+test("preflight accepts only the production project, never the demo project", async () =>
+  temporary(async (root) => {
+    const paths = await fixture(root);
+    await assert.rejects(
+      runHostingDeployPreflight(
+        options(paths, {
+          projectId: "demo-at-in-physics",
+          expectedProjectId: "demo-at-in-physics",
+        }),
+      ),
+      /trusted production project/,
+    );
+  }));
 
 test("dirty Git tree fails before creating a report", async () =>
   temporary(async (root) => {
@@ -249,6 +298,99 @@ test("Hosting config rejects unsafe public roots and dynamic rewrites", () => {
     },
   ]) {
     assert.throws(() => validateHostingConfiguration({ hosting }));
+  }
+  assert.throws(() =>
+    validateHostingConfiguration({
+      hosting: { public: "hosting-release", rewrites: [], target: "other" },
+    }),
+  );
+  assert.throws(() =>
+    validateHostingConfiguration({
+      hosting: {
+        public: "hosting-release",
+        rewrites: [],
+        target: "production",
+        site: "other-site",
+      },
+    }),
+  );
+});
+
+test("pinned CLI resolves only the repository-local exact package without a shell", async () => {
+  const repositoryRoot = fileURLToPath(new URL("../", import.meta.url));
+  const cli = await resolvePinnedFirebaseCli(repositoryRoot);
+  assert.equal(cli.version, "15.28.1");
+  assert.equal(cli.shell, false);
+  assert.equal(cli.cwd, repositoryRoot.replace(/[\\/]$/, ""));
+  assert.match(
+    cli.cliScript.replaceAll("\\", "/"),
+    /\/node_modules\/firebase-tools\/lib\/bin\/firebase\.js$/,
+  );
+  assert.deepEqual(futureHostingOnlyDeployArgs(), [
+    "deploy",
+    "--only",
+    "hosting:production",
+    "--project",
+    "at-in-physics",
+    "--config",
+    join(repositoryRoot, "firebase.json"),
+  ]);
+  await temporary(async (emptyRoot) => {
+    await assert.rejects(resolvePinnedFirebaseCli(emptyRoot), /unavailable/);
+  });
+});
+
+test("repository pins the audited Firebase CLI version exactly in manifest and lock", async () => {
+  const packageJson = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  );
+  const lock = JSON.parse(
+    await readFile(new URL("../package-lock.json", import.meta.url), "utf8"),
+  );
+  assert.equal(packageJson.devDependencies["firebase-tools"], "15.28.1");
+  assert.equal(lock.packages[""].devDependencies["firebase-tools"], "15.28.1");
+  assert.equal(lock.packages["node_modules/firebase-tools"].version, "15.28.1");
+  assert.equal(validatePinnedFirebaseDependency(packageJson, lock), "15.28.1");
+  assert.throws(() =>
+    validatePinnedFirebaseDependency(
+      {
+        ...packageJson,
+        devDependencies: {
+          ...packageJson.devDependencies,
+          "firebase-tools": "^15.28.1",
+        },
+      },
+      lock,
+    ),
+  );
+});
+
+test("Hosting target maps exactly one production site and rejects drift", () => {
+  const valid = {
+    projects: { default: PRODUCTION_FIREBASE_PROJECT },
+    targets: {
+      [PRODUCTION_FIREBASE_PROJECT]: {
+        hosting: { [PRODUCTION_HOSTING_TARGET]: [PRODUCTION_HOSTING_SITE] },
+      },
+    },
+  };
+  assert.deepEqual(validateFirebaseRc(valid), {
+    projectId: "at-in-physics",
+    hostingTarget: "production",
+    hostingSite: "at-in-physics",
+  });
+  assert.throws(() =>
+    validateFirebaseRc({ projects: valid.projects, targets: {} }),
+  );
+  for (const sites of [[], ["other-site"], ["at-in-physics", "other-site"]]) {
+    assert.throws(() =>
+      validateFirebaseRc({
+        ...valid,
+        targets: {
+          "at-in-physics": { hosting: { production: sites } },
+        },
+      }),
+    );
   }
 });
 

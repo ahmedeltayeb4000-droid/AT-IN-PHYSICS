@@ -911,7 +911,11 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
         hostingRoute: safe.hostingRoute,
         quotaWarning: "remaining monthly transfer cannot be proven locally",
         remainingMonthlyTransferKnown: false,
-        state: "PREFLIGHT_PASSED_NOT_DEPLOYED",
+        firebaseToolsVersion: "15.28.1",
+        hostingTarget: "production",
+        hostingSite: "at-in-physics",
+        deploySource: "hosting-release",
+        state: "READY_FOR_DEPLOYMENT_REVIEW_NOT_DEPLOYED",
       };
     },
   });
@@ -981,6 +985,16 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
         )
       ).status,
       403,
+    );
+    assert.equal(
+      (
+        await postJson("/api/video/preflight", {
+          releaseId,
+          hostingTarget: "attacker-target",
+          hostingSite: "attacker-site",
+        })
+      ).status,
+      400,
     );
     assert.equal(response.headers.get("access-control-allow-origin"), null);
     assert.equal(

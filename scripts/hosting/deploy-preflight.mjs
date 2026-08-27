@@ -7,6 +7,12 @@ try {
   const options = parseDeployPreflightArgs(process.argv.slice(2));
   const result = await runHostingDeployPreflight(options);
   console.log(`Project: ${result.report.projectId}`);
+  console.log(
+    `Firebase CLI: ${result.report.deployment.firebaseToolsVersion} (repository-local)`,
+  );
+  console.log(`Hosting target: ${result.report.deployment.hostingTarget}`);
+  console.log(`Hosting site: ${result.report.deployment.hostingSite}`);
+  console.log(`Deploy source: ${result.report.deployment.deploySource}`);
   console.log(`Commit: ${result.report.gitCommit}`);
   console.log(`Files: ${result.report.summary.fileCount}`);
   console.log(`Total bytes: ${result.report.summary.totalBytes}`);

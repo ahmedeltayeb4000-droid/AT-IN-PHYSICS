@@ -16,6 +16,17 @@ import {
   auditHostingRelease,
   DEFAULT_RELEASE_ROOT,
 } from "./releaseAssembly.mjs";
+import {
+  FIREBASE_CONFIG_PATH,
+  FIREBASE_RC_PATH,
+  HOSTING_DEPLOY_SOURCE,
+  PINNED_FIREBASE_TOOLS_VERSION,
+  PRODUCTION_FIREBASE_PROJECT,
+  PRODUCTION_HOSTING_SITE,
+  PRODUCTION_HOSTING_TARGET,
+  resolvePinnedFirebaseCli,
+  validateFirebaseRc,
+} from "./deploymentConfig.mjs";
 
 const execFileAsync = promisify(execFile);
 const REPOSITORY_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -165,7 +176,12 @@ export function validateHostingConfiguration(value) {
       "Firebase Hosting public directory must be hosting-release.",
     );
   }
-  if ("storage" in hosting || "source" in hosting) {
+  if (hosting.target !== PRODUCTION_HOSTING_TARGET) {
+    throw new Error(
+      "Firebase Hosting target is not the trusted production target.",
+    );
+  }
+  if ("storage" in hosting || "source" in hosting || "site" in hosting) {
     throw new Error(
       "Unsupported paid or framework Hosting configuration detected.",
     );
@@ -292,8 +308,10 @@ export async function runHostingDeployPreflight({
   repositoryRoot = REPOSITORY_ROOT,
   releaseRoot = DEFAULT_RELEASE_ROOT,
   reportRoot = DEFAULT_PREFLIGHT_REPORT_ROOT,
-  firebaseConfigPath = join(REPOSITORY_ROOT, "firebase.json"),
+  firebaseConfigPath = FIREBASE_CONFIG_PATH,
+  firebaseRcPath = FIREBASE_RC_PATH,
   gitInspector = inspectGitState,
+  cliResolver = resolvePinnedFirebaseCli,
   now = () => new Date(),
 } = {}) {
   const targetProjectId = resolveExplicitProjectTarget({
@@ -302,14 +320,33 @@ export async function runHostingDeployPreflight({
     environment,
   });
   const commit = requireCleanGitState(await gitInspector(repositoryRoot));
-  const firebaseConfigBytes = await readFile(firebaseConfigPath);
+  if (targetProjectId !== PRODUCTION_FIREBASE_PROJECT)
+    throw new Error("Preflight target is not the trusted production project.");
+  const [firebaseConfigBytes, firebaseRcBytes, firebaseCli] = await Promise.all(
+    [
+      readFile(firebaseConfigPath),
+      readFile(firebaseRcPath),
+      cliResolver(repositoryRoot),
+    ],
+  );
   let firebaseConfig;
+  let firebaseRc;
   try {
     firebaseConfig = JSON.parse(firebaseConfigBytes.toString("utf8"));
   } catch (error) {
     throw new Error("firebase.json contains malformed JSON.", { cause: error });
   }
+  try {
+    firebaseRc = JSON.parse(firebaseRcBytes.toString("utf8"));
+  } catch (error) {
+    throw new Error(".firebaserc contains malformed JSON.", { cause: error });
+  }
   validateHostingConfiguration(firebaseConfig);
+  validateFirebaseRc(firebaseRc);
+  if (firebaseCli.version !== PINNED_FIREBASE_TOOLS_VERSION)
+    throw new Error(
+      "Resolved Firebase CLI version differs from the pinned version.",
+    );
   const releaseFiles = await auditHostingRelease(resolve(releaseRoot));
   for (const path of releaseFiles.filter((path) =>
     path.startsWith("protected-media/"),
@@ -332,6 +369,18 @@ export async function runHostingDeployPreflight({
     firebaseConfigSha256: createHash("sha256")
       .update(firebaseConfigBytes)
       .digest("hex"),
+    firebaseRcSha256: createHash("sha256")
+      .update(firebaseRcBytes)
+      .digest("hex"),
+    deployment: {
+      firebaseToolsVersion: firebaseCli.version,
+      projectId: PRODUCTION_FIREBASE_PROJECT,
+      hostingTarget: PRODUCTION_HOSTING_TARGET,
+      hostingSite: PRODUCTION_HOSTING_SITE,
+      deploySource: HOSTING_DEPLOY_SOURCE,
+      repositoryLocalCli: true,
+      shellRequired: false,
+    },
     summary: {
       fileCount: files.length,
       totalBytes,

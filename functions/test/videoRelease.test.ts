@@ -138,6 +138,15 @@ test("preflight binds exact project, route, size, and hash with truthful quota w
             atv1Count: 1,
           },
           quota: { actualRemainingMonthlyTransferIsLocallyKnowable: false },
+          deployment: {
+            firebaseToolsVersion: "15.28.1",
+            projectId: "at-in-physics",
+            hostingTarget: "production",
+            hostingSite: "at-in-physics",
+            deploySource: "hosting-release",
+            repositoryLocalCli: true,
+            shellRequired: false,
+          },
           files: [
             {
               path: "protected-media/session-video.atv1",
@@ -154,7 +163,10 @@ test("preflight binds exact project, route, size, and hash with truthful quota w
     projectId: "at-in-physics",
     expectedProjectId: "at-in-physics",
   });
-  assert.equal(result.state, "PREFLIGHT_PASSED_NOT_DEPLOYED");
+  assert.equal(result.state, "READY_FOR_DEPLOYMENT_REVIEW_NOT_DEPLOYED");
+  assert.equal(result.firebaseToolsVersion, "15.28.1");
+  assert.equal(result.hostingTarget, "production");
+  assert.equal(result.hostingSite, "at-in-physics");
   assert.equal(result.remainingMonthlyTransferKnown, false);
   assert.match(result.quotaWarning, /cannot be proven locally/);
 });
