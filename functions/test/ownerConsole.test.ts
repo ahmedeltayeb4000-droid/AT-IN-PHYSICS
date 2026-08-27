@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { request } from "node:http";
 import test from "node:test";
 import type { Auth } from "firebase-admin/auth";
@@ -19,6 +20,10 @@ import type { CourseCreationOptions } from "../src/tooling/courseCreation.js";
 import type { ModuleCreationOptions } from "../src/tooling/moduleCreation.js";
 import type { SessionCreationOptions } from "../src/tooling/sessionCreation.js";
 import type { LessonContentPublicationResult } from "../src/tooling/lessonContentPublication.js";
+import {
+  prepareOwnerProtectedVideo,
+  validateOwnerVideoFileName,
+} from "../src/ownerConsole/videoPreparation.js";
 
 const course = (id: string, title = "Course") => ({
   id,
@@ -544,6 +549,9 @@ test("creation failures are sanitized and existing forms refresh inventories wit
     assert.match(js, /Edit Lesson/);
     assert.match(js, /lessonPreview'\)\.textContent/);
     assert.match(js, /lessonText\.maxLength=20000/);
+    assert.match(js, /Manage Video/);
+    assert.match(js, /LOCAL ONLY/);
+    assert.doesNotMatch(js, /contentKey|firebase deploy/);
     assert.doesNotMatch(js, /location\.reload|window\.location/);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -754,6 +762,183 @@ test("lesson endpoints reject invalid targets, extra authority/path fields, and 
     );
     assert.equal((await raw.text()).includes("RAW_FIREBASE_ERROR"), false);
     assert.equal(raw.headers.get("access-control-allow-origin"), null);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("local video preparation uses trusted packaging/staging, redacts key data, and removes plaintext temp input", async () => {
+  let temporaryInput = "";
+  const result = await prepareOwnerProtectedVideo(
+    {} as Firestore,
+    {
+      courseId: "course",
+      moduleId: "module",
+      sessionId: "session",
+      videoAssetId: "session-video",
+      originalFileName: "owner.mp4",
+      bytes: Buffer.from("fixture"),
+    },
+    {
+      readTarget: async () => ({
+        courseId: "course",
+        moduleId: "module",
+        sessionId: "session",
+        sessionTitle: "Session",
+        publicationStatus: "draft",
+        lessonText: null,
+        revisionMillis: 1,
+      }),
+      packageVideo: async (options) => {
+        temporaryInput = options.inputFile;
+        assert.equal((await lstat(temporaryInput)).isFile(), true);
+        return {
+          mode: "package",
+          target: {
+            courseId: options.courseId,
+            moduleId: options.moduleId,
+            sessionId: options.sessionId,
+          },
+          videoAssetId: options.videoAssetId,
+          inputFileName: "upload.mp4",
+          plaintextSize: 7,
+          artifactFileName: "session-video.atv1",
+          descriptorFileName: "session-video.publication.json",
+          encryptedSize: 39,
+          artifactSha256: "a".repeat(64),
+          contentKeySummary: {
+            present: true,
+            length: 43,
+            fingerprintPrefix: "SECRET",
+          },
+        };
+      },
+      stageVideo: async () => ({
+        mode: "prepare",
+        status: "prepared",
+        sourceArtifact: "source",
+        stagingDestination: "destination",
+        hostingRoute: "/protected-media/session-video.atv1",
+        videoAssetId: "session-video",
+        encryptedSize: 39,
+        sha256: "a".repeat(64),
+        quota: {
+          storageNoCostBytes: 1,
+          monthlyTransferNoCostBytes: 1,
+          maximumIndividualFileBytes: 1,
+        },
+      }),
+    },
+  );
+  assert.equal(result.status, "LOCAL_ONLY_NOT_UPLOADED");
+  assert.equal(result.inputFileName, "owner.mp4");
+  assert.equal(JSON.stringify(result).includes("SECRET"), false);
+  await assert.rejects(lstat(temporaryInput), { code: "ENOENT" });
+  for (const name of [
+    "../video.mp4",
+    "folder/video.mp4",
+    "video.txt",
+    " video.mp4",
+    "video.mp4\u0000",
+  ])
+    assert.throws(() => validateOwnerVideoFileName(name));
+});
+
+test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot inject authority or paths", async () => {
+  let calls = 0;
+  const safe = {
+    target: { courseId: "course", moduleId: "module", sessionId: "session" },
+    videoAssetId: "session-video",
+    inputFileName: "video.mp4",
+    plaintextSize: 20,
+    encryptedSize: 52,
+    artifactFileName: "session-video.atv1",
+    descriptorFileName: "session-video.publication.json",
+    artifactSha256: "a".repeat(64),
+    hostingRoute: "/protected-media/session-video.atv1",
+    stagingStatus: "prepared" as const,
+    status: "LOCAL_ONLY_NOT_UPLOADED" as const,
+  };
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: {} as Firestore,
+    ownerUid: "owner",
+    projectId: "demo-at-in-physics",
+    authorize: async () => {},
+    prepareVideo: async (_db, input) => {
+      calls += 1;
+      assert.equal(input.bytes.length, 20);
+      return safe;
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const path =
+    "/api/video/prepare?courseId=course&moduleId=module&sessionId=session&videoAssetId=session-video";
+  const upload = (url = path, headers: Record<string, string> = {}) =>
+    fetch(origin + url, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "video/mp4",
+        "x-owner-control-csrf": csrfForTests,
+        "x-video-file-name": encodeURIComponent("video.mp4"),
+        ...headers,
+      },
+      body: Buffer.alloc(20),
+    });
+  try {
+    const response = await upload();
+    assert.equal(response.status, 200);
+    assert.equal(calls, 1);
+    const text = await response.text();
+    assert.doesNotMatch(text, /contentKey|fingerprint|private/);
+    assert.equal(response.headers.get("access-control-allow-origin"), null);
+    assert.equal(
+      (await upload(path, { origin: "http://evil.example" })).status,
+      403,
+    );
+    assert.equal(
+      (await upload(path, { "x-owner-control-csrf": "wrong" })).status,
+      403,
+    );
+    assert.equal(
+      (await upload(path, { "content-type": "application/json" })).status,
+      415,
+    );
+    assert.equal((await upload(path + "&path=courses/other")).status, 400);
+    assert.equal((await upload(path + "&ownerUid=attacker")).status, 400);
+    assert.equal((await upload(path + "&projectId=other")).status, 400);
+    assert.equal(
+      (await upload(path.replace("session-video", "../escape"))).status,
+      400,
+    );
+    const oversized = await new Promise<number>((resolve, reject) => {
+      const req = request(
+        {
+          hostname: OWNER_CONSOLE_HOST,
+          port: address.port,
+          path,
+          method: "POST",
+          headers: {
+            host: `${OWNER_CONSOLE_HOST}:${address.port}`,
+            origin,
+            "content-type": "video/mp4",
+            "content-length": String(50 * 1024 * 1024 + 1),
+            "x-owner-control-csrf": csrfForTests,
+            "x-video-file-name": "video.mp4",
+          },
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(oversized, 400);
+    assert.equal(calls, 1);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

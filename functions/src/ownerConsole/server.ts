@@ -10,6 +10,10 @@ import type { Firestore } from "firebase-admin/firestore";
 import { validateCourseId } from "../enrollments/validation.js";
 import { validateLessonText } from "../lessonContent/validation.js";
 import {
+  MAX_VIDEO_INPUT_SIZE,
+  validateVideoAssetId,
+} from "../tooling/videoPackaging.js";
+import {
   runLessonContentPublication,
   type LessonContentPublicationResult,
 } from "../tooling/lessonContentPublication.js";
@@ -39,6 +43,11 @@ import {
   readOwnerSessions,
 } from "./inventory.js";
 import { LESSON_CLIENT_JS } from "./lessonClient.js";
+import {
+  prepareOwnerProtectedVideo,
+  validateOwnerVideoFileName,
+} from "./videoPreparation.js";
+import { VIDEO_CLIENT_JS } from "./videoClient.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -64,6 +73,7 @@ export type OwnerConsoleDependencies = Readonly<{
   authorize?: typeof requireOwnerAuthority;
   publishLesson?: typeof runLessonContentPublication;
   readLesson?: typeof readOwnerLessonContent;
+  prepareVideo?: typeof prepareOwnerProtectedVideo;
 }>;
 
 type Review = {
@@ -134,6 +144,27 @@ async function body(req: IncomingMessage): Promise<Record<string, unknown>> {
   return value as Record<string, unknown>;
 }
 
+async function videoBody(req: IncomingMessage): Promise<Buffer> {
+  const declared = Number(req.headers["content-length"]);
+  if (
+    !Number.isSafeInteger(declared) ||
+    declared <= 0 ||
+    declared > MAX_VIDEO_INPUT_SIZE
+  )
+    throw new Error("Video upload size is invalid.");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const bytes = Buffer.from(chunk);
+    size += bytes.length;
+    if (size > MAX_VIDEO_INPUT_SIZE)
+      throw new Error("Video upload is too large.");
+    chunks.push(bytes);
+  }
+  if (size !== declared) throw new Error("Video upload was incomplete.");
+  return Buffer.concat(chunks);
+}
+
 function exactInput(
   input: Record<string, unknown>,
   fields: readonly string[],
@@ -164,6 +195,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const authorize = deps.authorize ?? requireOwnerAuthority;
   const publishLesson = deps.publishLesson ?? runLessonContentPublication;
   const readLesson = deps.readLesson ?? readOwnerLessonContent;
+  const prepareVideo = deps.prepareVideo ?? prepareOwnerProtectedVideo;
   const server = createServer(async (req, res) => {
     const address = server.address() as AddressInfo | null;
     const origin = `http://${OWNER_CONSOLE_HOST}:${address?.port ?? OWNER_CONSOLE_DEFAULT_PORT}`;
@@ -190,7 +222,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           ...JSON_HEADERS,
           "content-type": "text/javascript; charset=utf-8",
         });
-        return res.end(`${CLIENT_JS}\n${LESSON_CLIENT_JS}`);
+        return res.end(`${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS}`);
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
         return send(res, 200, { projectId: deps.projectId, csrf });
@@ -238,6 +270,43 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           !equalToken(req.headers["x-owner-control-csrf"], csrf)
         )
           return fail(res, 403);
+        if (url.pathname === "/api/video/prepare") {
+          if (req.headers["content-type"] !== "video/mp4")
+            return fail(res, 415);
+          const expectedQuery = [
+            "courseId",
+            "moduleId",
+            "sessionId",
+            "videoAssetId",
+          ];
+          if (
+            [...url.searchParams.keys()].sort().join("|") !==
+            [...expectedQuery].sort().join("|")
+          )
+            return fail(res, 400);
+          await authorize(deps.auth, deps.ownerUid);
+          let originalFileName: string;
+          try {
+            originalFileName = decodeURIComponent(
+              typeof req.headers["x-video-file-name"] === "string"
+                ? req.headers["x-video-file-name"]
+                : "",
+            );
+          } catch {
+            return fail(res, 400);
+          }
+          const summary = await prepareVideo(deps.db, {
+            courseId: validateCourseId(url.searchParams.get("courseId")),
+            moduleId: validateCourseId(url.searchParams.get("moduleId")),
+            sessionId: validateCourseId(url.searchParams.get("sessionId")),
+            videoAssetId: validateVideoAssetId(
+              url.searchParams.get("videoAssetId"),
+            ),
+            originalFileName: validateOwnerVideoFileName(originalFileName),
+            bytes: await videoBody(req),
+          });
+          return send(res, 200, { preparation: summary });
+        }
         if (
           (req.headers["content-type"] ?? "").split(";", 1)[0] !==
           "application/json"
