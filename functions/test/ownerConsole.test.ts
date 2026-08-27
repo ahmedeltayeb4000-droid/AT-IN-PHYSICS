@@ -846,6 +846,8 @@ test("local video preparation uses trusted packaging/staging, redacts key data, 
 
 test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot inject authority or paths", async () => {
   let calls = 0;
+  let releaseCalls = 0;
+  let preflightCalls = 0;
   const safe = {
     target: { courseId: "course", moduleId: "module", sessionId: "session" },
     videoAssetId: "session-video",
@@ -870,6 +872,48 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
       assert.equal(input.bytes.length, 20);
       return safe;
     },
+    prepareVideoRelease: async (prepared, projectId, releaseId) => {
+      releaseCalls += 1;
+      assert.equal(prepared.summary, safe);
+      assert.equal(projectId, "demo-at-in-physics");
+      return {
+        releaseId,
+        preparationId: prepared.preparationId,
+        fingerprint: "f".repeat(64),
+        descriptorFileName: safe.descriptorFileName,
+        prepared: { descriptor: { videoAccess: { contentKey: "SECRET" } } },
+        safe: {
+          projectId,
+          target: safe.target,
+          videoAssetId: safe.videoAssetId,
+          artifactFileName: safe.artifactFileName,
+          artifactSize: safe.encryptedSize,
+          artifactSha256: safe.artifactSha256,
+          hostingRoute: safe.hostingRoute,
+          releaseFileCount: 2,
+          atv1Count: 1,
+          state: "LOCAL_RELEASE_NOT_DEPLOYED",
+        },
+      } as never;
+    },
+    preflightVideoRelease: async (release, projectId) => {
+      preflightCalls += 1;
+      assert.equal(release.safe.projectId, projectId);
+      return {
+        projectId,
+        gitCommit: "0".repeat(40),
+        fileCount: 2,
+        totalBytes: 100,
+        frontendBytes: 48,
+        protectedMediaBytes: 52,
+        atv1Count: 1,
+        artifactSha256: safe.artifactSha256,
+        hostingRoute: safe.hostingRoute,
+        quotaWarning: "remaining monthly transfer cannot be proven locally",
+        remainingMonthlyTransferKnown: false,
+        state: "PREFLIGHT_PASSED_NOT_DEPLOYED",
+      };
+    },
   });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
@@ -893,6 +937,51 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
     assert.equal(calls, 1);
     const text = await response.text();
     assert.doesNotMatch(text, /contentKey|fingerprint|private/);
+    const preparationId = JSON.parse(text).preparationId as string;
+    const postJson = (path: string, value: unknown, headers = {}) =>
+      fetch(origin + path, {
+        method: "POST",
+        headers: {
+          origin,
+          "content-type": "application/json",
+          "x-owner-control-csrf": csrfForTests,
+          ...headers,
+        },
+        body: JSON.stringify(value),
+      });
+    const releaseResponse = await postJson("/api/video/release", {
+      preparationId,
+    });
+    assert.equal(releaseResponse.status, 200);
+    const releaseText = await releaseResponse.text();
+    assert.doesNotMatch(releaseText, /contentKey|SECRET|descriptorFileName/);
+    const releaseId = JSON.parse(releaseText).releaseId as string;
+    const preflightResponse = await postJson("/api/video/preflight", {
+      releaseId,
+    });
+    assert.equal(preflightResponse.status, 200);
+    assert.doesNotMatch(await preflightResponse.text(), /contentKey|SECRET/);
+    assert.equal(releaseCalls, 1);
+    assert.equal(preflightCalls, 1);
+    assert.equal(
+      (
+        await postJson("/api/video/release", {
+          preparationId,
+          projectId: "evil",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await postJson(
+          "/api/video/preflight",
+          { releaseId },
+          { origin: "http://evil.example" },
+        )
+      ).status,
+      403,
+    );
     assert.equal(response.headers.get("access-control-allow-origin"), null);
     assert.equal(
       (await upload(path, { origin: "http://evil.example" })).status,

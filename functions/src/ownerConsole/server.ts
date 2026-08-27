@@ -48,6 +48,12 @@ import {
   validateOwnerVideoFileName,
 } from "./videoPreparation.js";
 import { VIDEO_CLIENT_JS } from "./videoClient.js";
+import {
+  preflightOwnerHostingRelease,
+  prepareOwnerHostingRelease,
+  type OwnerPreparedVideo,
+  type OwnerReleaseReview,
+} from "./videoRelease.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -74,6 +80,8 @@ export type OwnerConsoleDependencies = Readonly<{
   publishLesson?: typeof runLessonContentPublication;
   readLesson?: typeof readOwnerLessonContent;
   prepareVideo?: typeof prepareOwnerProtectedVideo;
+  prepareVideoRelease?: typeof prepareOwnerHostingRelease;
+  preflightVideoRelease?: typeof preflightOwnerHostingRelease;
 }>;
 
 type Review = {
@@ -196,6 +204,12 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const publishLesson = deps.publishLesson ?? runLessonContentPublication;
   const readLesson = deps.readLesson ?? readOwnerLessonContent;
   const prepareVideo = deps.prepareVideo ?? prepareOwnerProtectedVideo;
+  const prepareVideoRelease =
+    deps.prepareVideoRelease ?? prepareOwnerHostingRelease;
+  const preflightVideoRelease =
+    deps.preflightVideoRelease ?? preflightOwnerHostingRelease;
+  const preparedVideos = new Map<string, OwnerPreparedVideo>();
+  const videoReleases = new Map<string, OwnerReleaseReview>();
   const server = createServer(async (req, res) => {
     const address = server.address() as AddressInfo | null;
     const origin = `http://${OWNER_CONSOLE_HOST}:${address?.port ?? OWNER_CONSOLE_DEFAULT_PORT}`;
@@ -305,7 +319,9 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
             originalFileName: validateOwnerVideoFileName(originalFileName),
             bytes: await videoBody(req),
           });
-          return send(res, 200, { preparation: summary });
+          const preparationId = randomBytes(24).toString("base64url");
+          preparedVideos.set(preparationId, { preparationId, summary });
+          return send(res, 200, { preparationId, preparation: summary });
         }
         if (
           (req.headers["content-type"] ?? "").split(";", 1)[0] !==
@@ -313,6 +329,33 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         )
           return fail(res, 415);
         const input = await body(req);
+        if (url.pathname === "/api/video/release") {
+          exactInput(input, ["preparationId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const preparationId = requiredString(input.preparationId);
+          const prepared = preparedVideos.get(preparationId);
+          if (!prepared) return fail(res, 409);
+          const releaseId = randomBytes(24).toString("base64url");
+          const release = await prepareVideoRelease(
+            prepared,
+            deps.projectId,
+            releaseId,
+          );
+          videoReleases.set(releaseId, release);
+          return send(res, 200, { releaseId, release: release.safe });
+        }
+        if (url.pathname === "/api/video/preflight") {
+          exactInput(input, ["releaseId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const releaseId = requiredString(input.releaseId);
+          const release = videoReleases.get(releaseId);
+          if (!release) return fail(res, 409);
+          const preflight = await preflightVideoRelease(
+            release,
+            deps.projectId,
+          );
+          return send(res, 200, { preflight });
+        }
         if (url.pathname === "/api/lesson/review") {
           exactInput(input, [
             "courseId",
