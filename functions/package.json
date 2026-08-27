@@ -38,6 +38,8 @@
     "test:session-creation": "npm run build && node --test lib/test/sessionCreation.test.js",
     "test:session-creation:integration": "node --test lib/test/sessionCreation.integration.test.js",
     "session:publish": "npm run build && node lib/src/tooling/sessionPublicationCli.js",
+    "owner:control": "npm run build && node lib/src/ownerConsole/main.js",
+    "test:owner-control": "npm run build && node --test lib/test/ownerConsole.test.js",
     "test:session-publication": "npm run build && node --test lib/test/sessionPublication.test.js",
     "test:session-publication:integration": "node --test lib/test/sessionPublication.integration.test.js"
   },
