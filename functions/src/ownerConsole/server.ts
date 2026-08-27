@@ -258,7 +258,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS}\n${VIDEO_DEPLOY_CLIENT_JS}`,
+          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")

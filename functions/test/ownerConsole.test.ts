@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { lstat } from "node:fs/promises";
 import { request } from "node:http";
 import test from "node:test";
+import { Script } from "node:vm";
 import type { Auth } from "firebase-admin/auth";
 import { Timestamp, type Firestore } from "firebase-admin/firestore";
 import {
@@ -540,6 +541,7 @@ test("creation failures are sanitized and existing forms refresh inventories wit
     assert.equal(text.includes("RAW_FIREBASE_SECRET_ERROR"), false);
     const html = await (await fetch(origin)).text();
     const js = await (await fetch(origin + "/app.js")).text();
+    assert.doesNotThrow(() => new Script(js));
     assert.match(html, /id="courseForm"/);
     assert.match(html, /id="moduleForm"/);
     assert.match(html, /id="sessionForm"/);
