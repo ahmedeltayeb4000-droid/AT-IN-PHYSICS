@@ -18,6 +18,7 @@ import type { SessionPublicationResult } from "../src/tooling/sessionPublication
 import type { CourseCreationOptions } from "../src/tooling/courseCreation.js";
 import type { ModuleCreationOptions } from "../src/tooling/moduleCreation.js";
 import type { SessionCreationOptions } from "../src/tooling/sessionCreation.js";
+import type { LessonContentPublicationResult } from "../src/tooling/lessonContentPublication.js";
 
 const course = (id: string, title = "Course") => ({
   id,
@@ -540,7 +541,219 @@ test("creation failures are sanitized and existing forms refresh inventories wit
     assert.match(js, /loadCourses\(x\.courseId\)/);
     assert.match(js, /loadModules\(x\.moduleId\)/);
     assert.match(js, /await loadSessions\(\)/);
+    assert.match(js, /Edit Lesson/);
+    assert.match(js, /lessonPreview'\)\.textContent/);
+    assert.match(js, /lessonText\.maxLength=20000/);
     assert.doesNotMatch(js, /location\.reload|window\.location/);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("lesson read, review, and apply are minimized, authorized, stale-safe, and one-time", async () => {
+  let revision = 10;
+  let writes = 0;
+  let authorized = true;
+  const lessonResult = (apply: boolean): LessonContentPublicationResult => ({
+    inspection: {
+      currentState: "PRESENT",
+      currentCharacterCount: 8,
+      proposedCharacterCount: 12,
+      changeRequired: true,
+    },
+    writeNecessary: apply,
+    verified: apply,
+  });
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: {} as Firestore,
+    ownerUid: "trusted-owner",
+    projectId: "demo-at-in-physics",
+    authorize: async (_auth, uid) => {
+      assert.equal(uid, "trusted-owner");
+      if (!authorized) throw new Error("not owner");
+    },
+    readLesson: async (_db, courseId, moduleId, sessionId) => ({
+      courseId,
+      moduleId,
+      sessionId,
+      sessionTitle: "Lesson Session",
+      publicationStatus: "published",
+      lessonText: "Old text",
+      revisionMillis: revision,
+    }),
+    publishLesson: async (_db, target, text, apply, expected) => {
+      assert.deepEqual(target, {
+        courseId: "course",
+        moduleId: "module",
+        sessionId: "session",
+      });
+      assert.equal(text, "New content.");
+      if (apply) {
+        assert.equal(expected, 10);
+        if (revision !== expected) throw new Error("stale");
+        writes += 1;
+      }
+      return lessonResult(apply);
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const post = (path: string, value: unknown) =>
+    fetch(origin + path, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "x-owner-control-csrf": csrfForTests,
+      },
+      body: JSON.stringify(value),
+    });
+  try {
+    const read = await fetch(
+      origin + "/api/lesson?courseId=course&moduleId=module&sessionId=session",
+    );
+    assert.equal(read.status, 200);
+    const readText = await read.text();
+    assert.match(readText, /Old text/);
+    assert.doesNotMatch(readText, /revisionMillis|videoAssetId|contentKey/);
+    const reviewResponse = await post("/api/lesson/review", {
+      courseId: "course",
+      moduleId: "module",
+      sessionId: "session",
+      lessonText: "New content.",
+    });
+    assert.equal(reviewResponse.status, 200);
+    assert.equal(writes, 0);
+    const reviewed = (await reviewResponse.json()) as {
+      reviewId: string;
+      review: Record<string, unknown>;
+    };
+    assert.equal(reviewed.review.operation, "REPLACING");
+    assert.equal(reviewed.review.proposedCharacterCount, 12);
+    revision = 11;
+    assert.equal(
+      (await post("/api/lesson/apply", { reviewId: reviewed.reviewId })).status,
+      409,
+    );
+    assert.equal(writes, 0);
+    assert.equal(
+      (await post("/api/lesson/apply", { reviewId: reviewed.reviewId })).status,
+      409,
+    );
+    revision = 10;
+    const fresh = (await (
+      await post("/api/lesson/review", {
+        courseId: "course",
+        moduleId: "module",
+        sessionId: "session",
+        lessonText: "New content.",
+      })
+    ).json()) as { reviewId: string };
+    assert.equal(
+      (await post("/api/lesson/apply", { reviewId: fresh.reviewId })).status,
+      200,
+    );
+    assert.equal(writes, 1);
+    assert.equal(
+      (await post("/api/lesson/apply", { reviewId: fresh.reviewId })).status,
+      409,
+    );
+    assert.equal(writes, 1);
+    authorized = false;
+    assert.equal(
+      (
+        await fetch(
+          origin +
+            "/api/lesson?courseId=course&moduleId=module&sessionId=session",
+        )
+      ).status,
+      400,
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("lesson endpoints reject invalid targets, extra authority/path fields, and unsafe HTTP requests", async () => {
+  let calls = 0;
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: {} as Firestore,
+    ownerUid: "owner",
+    projectId: "demo-at-in-physics",
+    authorize: async () => {},
+    readLesson: async () => {
+      calls += 1;
+      throw new Error("RAW_FIREBASE_ERROR");
+    },
+    publishLesson: async () => {
+      calls += 1;
+      return {
+        inspection: {
+          currentState: "ABSENT",
+          currentCharacterCount: null,
+          proposedCharacterCount: 1,
+          changeRequired: true,
+        },
+        writeNecessary: false,
+        verified: false,
+      };
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const post = (value: unknown, headers: Record<string, string> = {}) =>
+    fetch(origin + "/api/lesson/review", {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "x-owner-control-csrf": csrfForTests,
+        ...headers,
+      },
+      body: JSON.stringify(value),
+    });
+  const valid = {
+    courseId: "course",
+    moduleId: "module",
+    sessionId: "session",
+    lessonText: "Lesson.",
+  };
+  try {
+    for (const value of [
+      { ...valid, sessionId: "bad/path" },
+      { ...valid, path: "courses/other" },
+      { ...valid, ownerUid: "attacker" },
+      { ...valid, projectId: "other" },
+      { ...valid, publicationStatus: "published" },
+      { ...valid, lessonText: " trailing " },
+    ])
+      assert.equal((await post(value)).status, 400);
+    assert.equal(calls, 0);
+    assert.equal(
+      (await post(valid, { origin: "http://evil.example" })).status,
+      403,
+    );
+    assert.equal(
+      (await post(valid, { "x-owner-control-csrf": "wrong" })).status,
+      403,
+    );
+    const nonJson = await fetch(origin + "/api/lesson/review", {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "text/plain",
+        "x-owner-control-csrf": csrfForTests,
+      },
+      body: "{}",
+    });
+    assert.equal(nonJson.status, 415);
+    const raw = await fetch(
+      origin + "/api/lesson?courseId=course&moduleId=module&sessionId=session",
+    );
+    assert.equal((await raw.text()).includes("RAW_FIREBASE_ERROR"), false);
+    assert.equal(raw.headers.get("access-control-allow-origin"), null);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

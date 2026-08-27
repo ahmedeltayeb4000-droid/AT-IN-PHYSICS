@@ -42,7 +42,10 @@ function sessionData(overrides: Record<string, unknown> = {}) {
 
 before(() => {
   requireEmulatorSafety();
-  app = initializeApp({ projectId: PROJECT_ID }, "lesson-content-publication-tests");
+  app = initializeApp(
+    { projectId: PROJECT_ID },
+    "lesson-content-publication-tests",
+  );
   db = getFirestore(app);
 });
 
@@ -51,8 +54,14 @@ after(async () => {
 });
 
 test("dry run inspects the exact Session and performs zero writes", async () => {
-  const ids = target("lesson-dry-course", "lesson-dry-module", "lesson-dry-session");
-  const reference = db.doc(sessionPath(ids.courseId, ids.moduleId, ids.sessionId));
+  const ids = target(
+    "lesson-dry-course",
+    "lesson-dry-module",
+    "lesson-dry-session",
+  );
+  const reference = db.doc(
+    sessionPath(ids.courseId, ids.moduleId, ids.sessionId),
+  );
   await reference.set(sessionData());
   const before = await reference.get();
 
@@ -82,7 +91,9 @@ test("apply updates only lessonText and preserves exact Session isolation", asyn
     "lesson-apply-module",
     "lesson-apply-session",
   );
-  const reference = db.doc(sessionPath(ids.courseId, ids.moduleId, ids.sessionId));
+  const reference = db.doc(
+    sessionPath(ids.courseId, ids.moduleId, ids.sessionId),
+  );
   const siblingReference = db.doc(
     sessionPath(ids.courseId, ids.moduleId, "lesson-sibling-session"),
   );
@@ -113,7 +124,10 @@ test("apply updates only lessonText and preserves exact Session isolation", asyn
     ...initial,
     lessonText: "Updated lesson text.\n\nSecond paragraph.",
   });
-  assert.equal((await siblingReference.get()).data()?.lessonText, "Sibling text.");
+  assert.equal(
+    (await siblingReference.get()).data()?.lessonText,
+    "Sibling text.",
+  );
   assert.equal(
     (await otherModuleReference.get()).data()?.lessonText,
     "Other module text.",
@@ -147,7 +161,9 @@ test("malformed existing lessonText fails closed without mutation", async () => 
     "lesson-malformed-module",
     "lesson-malformed-session",
   );
-  const reference = db.doc(sessionPath(ids.courseId, ids.moduleId, ids.sessionId));
+  const reference = db.doc(
+    sessionPath(ids.courseId, ids.moduleId, ids.sessionId),
+  );
   await reference.set(sessionData({ lessonText: "   " }));
   const before = await reference.get();
 
@@ -167,7 +183,9 @@ test("invalid proposed lessonText fails before mutation", async () => {
     "lesson-invalid-module",
     "lesson-invalid-session",
   );
-  const reference = db.doc(sessionPath(ids.courseId, ids.moduleId, ids.sessionId));
+  const reference = db.doc(
+    sessionPath(ids.courseId, ids.moduleId, ids.sessionId),
+  );
   await reference.set(sessionData());
   const before = await reference.get();
 
@@ -182,8 +200,14 @@ test("invalid proposed lessonText fails before mutation", async () => {
 });
 
 test("no-op apply is idempotent and preserves update time", async () => {
-  const ids = target("lesson-noop-course", "lesson-noop-module", "lesson-noop-session");
-  const reference = db.doc(sessionPath(ids.courseId, ids.moduleId, ids.sessionId));
+  const ids = target(
+    "lesson-noop-course",
+    "lesson-noop-module",
+    "lesson-noop-session",
+  );
+  const reference = db.doc(
+    sessionPath(ids.courseId, ids.moduleId, ids.sessionId),
+  );
   await reference.set(sessionData({ lessonText: "Unchanged lesson text." }));
   const before = await reference.get();
 
@@ -199,4 +223,77 @@ test("no-op apply is idempotent and preserves update time", async () => {
   assert.equal(result.verified, true);
   const afterSnapshot = await reference.get();
   assert.equal(before.updateTime?.isEqual(afterSnapshot.updateTime!), true);
+});
+
+test("review revision rejects stale apply without overwriting intervening Session changes", async () => {
+  const ids = target(
+    "lesson-stale-course",
+    "lesson-stale-module",
+    "lesson-stale-session",
+  );
+  const reference = db.doc(
+    sessionPath(ids.courseId, ids.moduleId, ids.sessionId),
+  );
+  await reference.set(
+    sessionData({ publicationStatus: "draft", lessonText: "Original." }),
+  );
+  const reviewed = await reference.get();
+  await reference.update({ title: "Changed after review" });
+  await assert.rejects(
+    runLessonContentPublication(
+      db,
+      ids,
+      "Reviewed proposal.",
+      true,
+      reviewed.updateTime!.toMillis(),
+    ),
+    /changed after lesson review/,
+  );
+  assert.deepEqual((await reference.get()).data(), {
+    ...sessionData({ publicationStatus: "draft", lessonText: "Original." }),
+    title: "Changed after review",
+  });
+});
+
+test("draft lesson apply preserves publication, release, video, discovery, and video access", async () => {
+  const ids = target(
+    "lesson-isolation-course",
+    "lesson-isolation-module",
+    "lesson-isolation-session",
+  );
+  const reference = db.doc(
+    sessionPath(ids.courseId, ids.moduleId, ids.sessionId),
+  );
+  const discovery = db.doc(
+    `courses/${ids.courseId}/modules/${ids.moduleId}/sessionDiscovery/visible`,
+  );
+  const access = reference.collection("videoAccess").doc("primary");
+  const releaseAt = Timestamp.fromDate(new Date("2035-01-01T00:00:00.000Z"));
+  await reference.set(
+    sessionData({
+      publicationStatus: "draft",
+      releaseAt,
+      videoAssetId: "asset",
+    }),
+  );
+  await discovery.set({ sessionIds: ["other"] });
+  await access.set({ videoAssetId: "asset", contentKey: "A".repeat(43) });
+  const [discoveryBefore, accessBefore] = await db.getAll(discovery, access);
+  await runLessonContentPublication(db, ids, "Draft lesson content.", true);
+  assert.deepEqual((await reference.get()).data(), {
+    ...sessionData({
+      publicationStatus: "draft",
+      releaseAt,
+      videoAssetId: "asset",
+    }),
+    lessonText: "Draft lesson content.",
+  });
+  assert.equal(
+    (await discovery.get()).updateTime?.isEqual(discoveryBefore.updateTime!),
+    true,
+  );
+  assert.equal(
+    (await access.get()).updateTime?.isEqual(accessBefore.updateTime!),
+    true,
+  );
 });

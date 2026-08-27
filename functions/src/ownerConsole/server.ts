@@ -8,6 +8,11 @@ import type { AddressInfo } from "node:net";
 import type { Auth } from "firebase-admin/auth";
 import type { Firestore } from "firebase-admin/firestore";
 import { validateCourseId } from "../enrollments/validation.js";
+import { validateLessonText } from "../lessonContent/validation.js";
+import {
+  runLessonContentPublication,
+  type LessonContentPublicationResult,
+} from "../tooling/lessonContentPublication.js";
 import {
   runCourseCreationService,
   safeCourseCreationSummary,
@@ -29,9 +34,11 @@ import {
 } from "../tooling/sessionPublication.js";
 import {
   readOwnerCourses,
+  readOwnerLessonContent,
   readOwnerModules,
   readOwnerSessions,
 } from "./inventory.js";
+import { LESSON_CLIENT_JS } from "./lessonClient.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -55,6 +62,8 @@ export type OwnerConsoleDependencies = Readonly<{
   createModule?: typeof runModuleCreationService;
   createSession?: typeof runSessionCreationService;
   authorize?: typeof requireOwnerAuthority;
+  publishLesson?: typeof runLessonContentPublication;
+  readLesson?: typeof readOwnerLessonContent;
 }>;
 
 type Review = {
@@ -62,11 +71,36 @@ type Review = {
   fingerprint: string;
   used: boolean;
 };
+type LessonReview = {
+  target: { courseId: string; moduleId: string; sessionId: string };
+  lessonText: string;
+  revisionMillis: number;
+  used: boolean;
+};
 
 function fingerprint(result: SessionPublicationResult): string {
   return createHash("sha256")
     .update(JSON.stringify(safeSessionPublicationSummary(result)))
     .digest("hex");
+}
+function safeLessonReview(
+  current: Awaited<ReturnType<typeof readOwnerLessonContent>>,
+  result: LessonContentPublicationResult,
+  lessonText: string,
+) {
+  return {
+    courseId: current.courseId,
+    moduleId: current.moduleId,
+    sessionId: current.sessionId,
+    sessionTitle: current.sessionTitle,
+    publicationStatus: current.publicationStatus,
+    operation:
+      result.inspection.currentState === "ABSENT" ? "ADDING" : "REPLACING",
+    currentCharacterCount: result.inspection.currentCharacterCount,
+    proposedCharacterCount: result.inspection.proposedCharacterCount,
+    changeRequired: result.inspection.changeRequired,
+    preview: lessonText.slice(0, 240),
+  };
 }
 function equalToken(left: string, right: string) {
   const a = Buffer.from(left);
@@ -121,12 +155,15 @@ function requiredString(value: unknown): string {
 export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const csrf = randomBytes(32).toString("base64url");
   const reviews = new Map<string, Review>();
+  const lessonReviews = new Map<string, LessonReview>();
   const now = deps.now ?? (() => new Date());
   const publish = deps.publish ?? runSessionPublicationService;
   const createCourse = deps.createCourse ?? runCourseCreationService;
   const createModule = deps.createModule ?? runModuleCreationService;
   const createSession = deps.createSession ?? runSessionCreationService;
   const authorize = deps.authorize ?? requireOwnerAuthority;
+  const publishLesson = deps.publishLesson ?? runLessonContentPublication;
+  const readLesson = deps.readLesson ?? readOwnerLessonContent;
   const server = createServer(async (req, res) => {
     const address = server.address() as AddressInfo | null;
     const origin = `http://${OWNER_CONSOLE_HOST}:${address?.port ?? OWNER_CONSOLE_DEFAULT_PORT}`;
@@ -153,7 +190,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           ...JSON_HEADERS,
           "content-type": "text/javascript; charset=utf-8",
         });
-        return res.end(CLIENT_JS);
+        return res.end(`${CLIENT_JS}\n${LESSON_CLIENT_JS}`);
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
         return send(res, 200, { projectId: deps.projectId, csrf });
@@ -174,6 +211,26 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
             url.searchParams.get("moduleId") ?? "",
           ),
         });
+      if (req.method === "GET" && url.pathname === "/api/lesson") {
+        await authorize(deps.auth, deps.ownerUid);
+        const lesson = await readLesson(
+          deps.db,
+          url.searchParams.get("courseId") ?? "",
+          url.searchParams.get("moduleId") ?? "",
+          url.searchParams.get("sessionId") ?? "",
+        );
+        return send(res, 200, {
+          lesson: {
+            courseId: lesson.courseId,
+            moduleId: lesson.moduleId,
+            sessionId: lesson.sessionId,
+            sessionTitle: lesson.sessionTitle,
+            publicationStatus: lesson.publicationStatus,
+            lessonText: lesson.lessonText,
+            hasLesson: lesson.lessonText !== null,
+          },
+        });
+      }
       if (req.method === "POST") {
         if (
           req.headers.origin !== origin ||
@@ -187,6 +244,82 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         )
           return fail(res, 415);
         const input = await body(req);
+        if (url.pathname === "/api/lesson/review") {
+          exactInput(input, [
+            "courseId",
+            "moduleId",
+            "sessionId",
+            "lessonText",
+          ]);
+          await authorize(deps.auth, deps.ownerUid);
+          const target = {
+            courseId: validateCourseId(input.courseId),
+            moduleId: validateCourseId(input.moduleId),
+            sessionId: validateCourseId(input.sessionId),
+          };
+          const lessonText = validateLessonText(input.lessonText);
+          const before = await readLesson(
+            deps.db,
+            target.courseId,
+            target.moduleId,
+            target.sessionId,
+          );
+          const result = await publishLesson(
+            deps.db,
+            target,
+            lessonText,
+            false,
+          );
+          const after = await readLesson(
+            deps.db,
+            target.courseId,
+            target.moduleId,
+            target.sessionId,
+          );
+          if (before.revisionMillis !== after.revisionMillis)
+            return fail(res, 409);
+          const reviewId = randomBytes(24).toString("base64url");
+          lessonReviews.set(reviewId, {
+            target,
+            lessonText,
+            revisionMillis: after.revisionMillis,
+            used: false,
+          });
+          return send(res, 200, {
+            reviewId,
+            review: safeLessonReview(after, result, lessonText),
+          });
+        }
+        if (url.pathname === "/api/lesson/apply") {
+          exactInput(input, ["reviewId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const reviewId = requiredString(input.reviewId);
+          const review = lessonReviews.get(reviewId);
+          if (!review || review.used) return fail(res, 409);
+          review.used = true;
+          const current = await readLesson(
+            deps.db,
+            review.target.courseId,
+            review.target.moduleId,
+            review.target.sessionId,
+          );
+          if (current.revisionMillis !== review.revisionMillis)
+            return fail(res, 409);
+          const result = await publishLesson(
+            deps.db,
+            review.target,
+            review.lessonText,
+            true,
+            review.revisionMillis,
+          );
+          lessonReviews.delete(reviewId);
+          return send(res, 200, {
+            result: {
+              writeNecessary: result.writeNecessary,
+              verified: result.verified,
+            },
+          });
+        }
         if (url.pathname === "/api/courses/create") {
           exactInput(input, ["courseId", "title", "shortDescription"]);
           await authorize(deps.auth, deps.ownerUid);
@@ -329,7 +462,7 @@ export async function listenOwnerConsole(
 }
 
 function renderOwnerConsole(projectId: string) {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Owner Control</title><style>body{font:16px system-ui;margin:0;background:#f4f6fa;color:#18202b}main{max-width:960px;margin:auto;padding:32px}header{display:flex;justify-content:space-between;align-items:center}section{background:white;padding:20px;margin:18px 0;border-radius:12px;box-shadow:0 2px 12px #0001}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.grid label{display:flex;flex-direction:column;gap:5px}input,textarea,select,button{font:inherit;padding:10px}button{cursor:pointer;align-self:end}.badge{padding:3px 8px;border-radius:20px;background:#e6eaf0}.draft{background:#fff1bf}.published{background:#cef2d8}li{display:flex;gap:12px;align-items:center;padding:12px;border-bottom:1px solid #ddd;flex-wrap:wrap}.push{margin-left:auto}dialog{max-width:560px;border:0;border-radius:12px;padding:24px}#message{min-height:24px;color:#a12424}.hint{color:#56606d;font-size:.9rem}@media(max-width:650px){header{display:block}.push{margin-left:0}}</style></head><body><main><header><h1>A.T IN PHYSICS Owner Control</h1><strong>Target: ${escapeHtml(projectId)}</strong></header><p id="message" role="status"></p><section><h2>Courses</h2><label>Existing Course <select id="course"><option value="">Select Course</option></select></label><h3>Create Course</h3><form id="courseForm" class="grid"><label>Course ID<input name="courseId" required maxlength="128" autocomplete="off"><span class="hint">Lowercase letters, numbers and hyphens.</span></label><label>Title<input name="title" required maxlength="160"></label><label>Short Description<textarea name="shortDescription" required maxlength="1000"></textarea></label><button>Create Course</button></form></section><section><h2>Modules</h2><label>Existing Module <select id="module" disabled><option value="">Select Module</option></select></label><h3>Create Module</h3><form id="moduleForm" class="grid"><label>Module ID<input name="moduleId" required maxlength="128" autocomplete="off"></label><label>Module Title<input name="title" required maxlength="160"></label><label>Order<input name="order" required type="number" min="0" step="1"></label><button disabled>Create Module</button></form></section><section><h2>Sessions</h2><ul id="sessions"><li>Select a Course and Module.</li></ul><h3>Create Session</h3><form id="sessionForm" class="grid"><label>Session ID<input name="sessionId" required maxlength="128" autocomplete="off"></label><label>Session Title<input name="title" required maxlength="160"></label><label>Order<input name="order" required type="number" min="0" step="1"></label><button disabled>Create Session</button></form></section><dialog id="review"><h2>Review publication</h2><div id="reviewBody"></div><button id="confirm">Confirm Publish</button><button id="cancel">Cancel</button></dialog></main><script src="/app.js" defer></script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Owner Control</title><style>body{font:16px system-ui;margin:0;background:#f4f6fa;color:#18202b}main{max-width:960px;margin:auto;padding:32px}header{display:flex;justify-content:space-between;align-items:center}section{background:white;padding:20px;margin:18px 0;border-radius:12px;box-shadow:0 2px 12px #0001}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}.grid label{display:flex;flex-direction:column;gap:5px}input,textarea,select,button{font:inherit;padding:10px}button{cursor:pointer;align-self:end}.badge{padding:3px 8px;border-radius:20px;background:#e6eaf0}.draft{background:#fff1bf}.published{background:#cef2d8}li{display:flex;gap:12px;align-items:center;padding:12px;border-bottom:1px solid #ddd;flex-wrap:wrap}.push{margin-left:auto}dialog{max-width:640px;width:calc(100% - 48px);border:0;border-radius:12px;padding:24px}dialog textarea{width:100%;min-height:300px;box-sizing:border-box}pre{white-space:pre-wrap;max-height:220px;overflow:auto;background:#f4f6fa;padding:12px}#message{min-height:24px;color:#a12424}.hint{color:#56606d;font-size:.9rem}@media(max-width:650px){header{display:block}.push{margin-left:0}}</style></head><body><main><header><h1>A.T IN PHYSICS Owner Control</h1><strong>Target: ${escapeHtml(projectId)}</strong></header><p id="message" role="status"></p><section><h2>Courses</h2><label>Existing Course <select id="course"><option value="">Select Course</option></select></label><h3>Create Course</h3><form id="courseForm" class="grid"><label>Course ID<input name="courseId" required maxlength="128" autocomplete="off"><span class="hint">Lowercase letters, numbers and hyphens.</span></label><label>Title<input name="title" required maxlength="160"></label><label>Short Description<textarea name="shortDescription" required maxlength="1000"></textarea></label><button>Create Course</button></form></section><section><h2>Modules</h2><label>Existing Module <select id="module" disabled><option value="">Select Module</option></select></label><h3>Create Module</h3><form id="moduleForm" class="grid"><label>Module ID<input name="moduleId" required maxlength="128" autocomplete="off"></label><label>Module Title<input name="title" required maxlength="160"></label><label>Order<input name="order" required type="number" min="0" step="1"></label><button disabled>Create Module</button></form></section><section><h2>Sessions</h2><ul id="sessions"><li>Select a Course and Module.</li></ul><h3>Create Session</h3><form id="sessionForm" class="grid"><label>Session ID<input name="sessionId" required maxlength="128" autocomplete="off"></label><label>Session Title<input name="title" required maxlength="160"></label><label>Order<input name="order" required type="number" min="0" step="1"></label><button disabled>Create Session</button></form></section><dialog id="lessonEditor"><h2>Edit Lesson</h2><p id="lessonTarget"></p><label>Lesson Content<textarea id="lessonText" required maxlength="20000"></textarea></label><p id="lessonCount" class="hint"></p><button id="lessonReviewButton">Review Changes</button><button id="lessonCancel">Cancel</button></dialog><dialog id="lessonReview"><h2>Review Lesson Changes</h2><p id="lessonReviewSummary"></p><pre id="lessonPreview"></pre><button id="lessonConfirm">Confirm Save</button><button id="lessonReviewCancel">Cancel</button></dialog><dialog id="review"><h2>Review publication</h2><div id="reviewBody"></div><button id="confirm">Confirm Publish</button><button id="cancel">Cancel</button></dialog></main><script src="/app.js" defer></script></body></html>`;
 }
 function escapeHtml(value: string) {
   return value.replace(

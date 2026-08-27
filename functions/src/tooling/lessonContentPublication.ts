@@ -87,7 +87,9 @@ export function parseLessonContentPublicationArgs(
 
   const target = validateLessonContentTarget({ courseId, moduleId, sessionId });
   if (typeof lessonFile !== "string" || !lessonFile.trim()) {
-    throw new Error("A non-empty lesson file path is required with --lesson-file.");
+    throw new Error(
+      "A non-empty lesson file path is required with --lesson-file.",
+    );
   }
   return { ...target, lessonFile, apply };
 }
@@ -112,7 +114,10 @@ function inspectSessionData(
   data: DocumentData,
   proposedLessonText: string,
 ): LessonContentPublicationInspection {
-  const hasLessonText = Object.prototype.hasOwnProperty.call(data, "lessonText");
+  const hasLessonText = Object.prototype.hasOwnProperty.call(
+    data,
+    "lessonText",
+  );
   let currentLessonText: string | undefined;
   if (hasLessonText) {
     try {
@@ -141,6 +146,7 @@ export async function runLessonContentPublication(
   rawTarget: ValidatedLessonContentTarget,
   proposedValue: unknown,
   apply: boolean,
+  expectedRevisionMillis?: number,
 ): Promise<LessonContentPublicationResult> {
   const target = validateLessonContentTarget(rawTarget);
   const proposedLessonText = validateLessonText(proposedValue);
@@ -156,6 +162,11 @@ export async function runLessonContentPublication(
   const transactionResult = await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(reference);
     if (!snapshot.exists) throw new Error("Session was not found.");
+    if (
+      expectedRevisionMillis !== undefined &&
+      snapshot.updateTime?.toMillis() !== expectedRevisionMillis
+    )
+      throw new Error("Session changed after lesson review.");
     const before = snapshot.data()!;
     const inspection = inspectSessionData(before, proposedLessonText);
     if (inspection.changeRequired) {

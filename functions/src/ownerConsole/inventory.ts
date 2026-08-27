@@ -122,3 +122,54 @@ export async function readOwnerSessions(
     snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })),
   );
 }
+
+export type OwnerLessonContent = Readonly<{
+  courseId: string;
+  moduleId: string;
+  sessionId: string;
+  sessionTitle: string;
+  publicationStatus: "draft" | "published";
+  lessonText: string | null;
+  revisionMillis: number;
+}>;
+
+export async function readOwnerLessonContent(
+  db: Firestore,
+  courseId: string,
+  moduleId: string,
+  sessionId: string,
+): Promise<OwnerLessonContent> {
+  const course = validateCourseId(courseId);
+  const module = validateCourseId(moduleId);
+  const session = validateCourseId(sessionId);
+  const courseRef = db.doc(`courses/${course}`);
+  const moduleRef = db.doc(`courses/${course}/modules/${module}`);
+  const sessionRef = db.doc(
+    `courses/${course}/modules/${module}/sessions/${session}`,
+  );
+  const [courseSnap, moduleSnap, sessionSnap] = await db.getAll(
+    courseRef,
+    moduleRef,
+    sessionRef,
+  );
+  if (!courseSnap.exists) throw new Error("Course was not found.");
+  validateTrustedCourseDocument(courseSnap.data(), course);
+  if (!moduleSnap.exists) throw new Error("Module was not found.");
+  validateTrustedModuleDocument(moduleSnap.data());
+  if (!sessionSnap.exists) throw new Error("Session was not found.");
+  const data = validateSessionForVideoPublication(sessionSnap.data());
+  const revisionMillis = sessionSnap.updateTime?.toMillis();
+  if (revisionMillis === undefined)
+    throw new Error("Session revision is unavailable.");
+  return {
+    courseId: course,
+    moduleId: module,
+    sessionId: session,
+    sessionTitle: data.title,
+    publicationStatus: data.publicationStatus,
+    lessonText: Object.prototype.hasOwnProperty.call(data, "lessonText")
+      ? (data.lessonText as string)
+      : null,
+    revisionMillis,
+  };
+}
