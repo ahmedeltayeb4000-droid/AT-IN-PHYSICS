@@ -67,6 +67,112 @@ service cloud.firestore {
         && isValidCourseText(data.shortDescription, 1000);
     }
 
+    function isPublishedTrustedCourse(courseId) {
+      let coursePath = /databases/$(database)/documents/courses/$(courseId);
+      return exists(coursePath)
+        && isValidCourseData(courseId, get(coursePath).data)
+        && get(coursePath).data.status == "published";
+    }
+
+    function isCanonicalAccessCodeId(accessCodeId) {
+      return accessCodeId.matches("^[a-f0-9]{64}$");
+    }
+
+    function isValidAccessCodeData(data) {
+      return data.keys().hasAll([
+          "version",
+          "courseId",
+          "status",
+          "createdAt",
+          "expiresAt",
+          "redeemedBy",
+          "redeemedAt"
+        ])
+        && data.keys().hasOnly([
+          "version",
+          "courseId",
+          "status",
+          "createdAt",
+          "expiresAt",
+          "redeemedBy",
+          "redeemedAt"
+        ])
+        && data.version == 1
+        && isValidCourseId(data.courseId)
+        && data.createdAt is timestamp
+        && (data.expiresAt == null || data.expiresAt is timestamp)
+        && (
+          (
+            (data.status == "active" || data.status == "revoked")
+            && data.redeemedBy == null
+            && data.redeemedAt == null
+          )
+          || (
+            data.status == "redeemed"
+            && data.redeemedBy is string
+            && data.redeemedBy.size() > 0
+            && data.redeemedAt is timestamp
+          )
+        );
+    }
+
+    function isActiveUnexpiredAccessCode(data) {
+      return isValidAccessCodeData(data)
+        && data.status == "active"
+        && data.redeemedBy == null
+        && data.redeemedAt == null
+        && (data.expiresAt == null || data.expiresAt > request.time);
+    }
+
+    function isExactAccessCodeEnrollment(
+      data,
+      enrollmentId,
+      userId,
+      courseId,
+      accessCodeId
+    ) {
+      return data.keys().hasAll([
+          "userId",
+          "courseId",
+          "status",
+          "grantedAt",
+          "expiresAt",
+          "source",
+          "sourceId",
+          "grantedBy"
+        ])
+        && data.keys().hasOnly([
+          "userId",
+          "courseId",
+          "status",
+          "grantedAt",
+          "expiresAt",
+          "source",
+          "sourceId",
+          "grantedBy"
+        ])
+        && enrollmentId == userId + "_" + courseId
+        && data.userId == userId
+        && data.courseId == courseId
+        && data.status == "active"
+        && data.grantedAt == request.time
+        && data.expiresAt == null
+        && data.source == "access_code"
+        && data.sourceId == accessCodeId
+        && data.grantedBy == "access-code-service";
+    }
+
+    function isExactRedeemedAccessCode(before, after, userId) {
+      return isValidAccessCodeData(after)
+        && after.version == before.version
+        && after.courseId == before.courseId
+        && after.createdAt == before.createdAt
+        && after.expiresAt == before.expiresAt
+        && after.status == "redeemed"
+        && after.redeemedBy == userId
+        && after.redeemedAt == request.time;
+    }
+
     function isValidCreatedCourse(courseId) {
       return isValidCourseData(courseId, request.resource.data)
         && request.resource.data.status == "draft";
@@ -197,10 +303,88 @@ service cloud.firestore {
       }
     }
 
+    match /accessCodes/{accessCodeId} {
+      allow get: if request.auth != null
+        && isCanonicalAccessCodeId(accessCodeId)
+        && isValidAccessCodeData(resource.data)
+        && (
+          isActiveUnexpiredAccessCode(resource.data)
+          || (
+            resource.data.status == "redeemed"
+            && resource.data.redeemedBy == request.auth.uid
+          )
+        );
+      allow list, create, delete: if false;
+      allow update: if request.auth != null
+        && isCanonicalAccessCodeId(accessCodeId)
+        && isActiveUnexpiredAccessCode(resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(["status", "redeemedBy", "redeemedAt"])
+        && isExactRedeemedAccessCode(
+          resource.data,
+          request.resource.data,
+          request.auth.uid
+        )
+        && isPublishedTrustedCourse(resource.data.courseId)
+        && !exists(
+          /databases/$(database)/documents/enrollments/$(request.auth.uid + "_" + resource.data.courseId)
+        )
+        && existsAfter(
+          /databases/$(database)/documents/enrollments/$(request.auth.uid + "_" + resource.data.courseId)
+        )
+        && isExactAccessCodeEnrollment(
+          getAfter(
+            /databases/$(database)/documents/enrollments/$(request.auth.uid + "_" + resource.data.courseId)
+          ).data,
+          request.auth.uid + "_" + resource.data.courseId,
+          request.auth.uid,
+          resource.data.courseId,
+          accessCodeId
+        );
+    }
+
     match /enrollments/{enrollmentId} {
-      allow read: if request.auth != null
+      allow get: if request.auth != null
+        && (
+          !exists(/databases/$(database)/documents/enrollments/$(enrollmentId))
+          || resource.data.userId == request.auth.uid
+        );
+      allow list: if request.auth != null
         && resource.data.userId == request.auth.uid;
-      allow write: if false;
+      allow create: if request.auth != null
+        && isCanonicalAccessCodeId(request.resource.data.sourceId)
+        && isExactAccessCodeEnrollment(
+          request.resource.data,
+          enrollmentId,
+          request.auth.uid,
+          request.resource.data.courseId,
+          request.resource.data.sourceId
+        )
+        && isPublishedTrustedCourse(request.resource.data.courseId)
+        && exists(
+          /databases/$(database)/documents/accessCodes/$(request.resource.data.sourceId)
+        )
+        && isActiveUnexpiredAccessCode(
+          get(
+            /databases/$(database)/documents/accessCodes/$(request.resource.data.sourceId)
+          ).data
+        )
+        && get(
+          /databases/$(database)/documents/accessCodes/$(request.resource.data.sourceId)
+        ).data.courseId == request.resource.data.courseId
+        && existsAfter(
+          /databases/$(database)/documents/accessCodes/$(request.resource.data.sourceId)
+        )
+        && isExactRedeemedAccessCode(
+          get(
+            /databases/$(database)/documents/accessCodes/$(request.resource.data.sourceId)
+          ).data,
+          getAfter(
+            /databases/$(database)/documents/accessCodes/$(request.resource.data.sourceId)
+          ).data,
+          request.auth.uid
+        );
+      allow update, delete: if false;
     }
 
     match /{document=**} {

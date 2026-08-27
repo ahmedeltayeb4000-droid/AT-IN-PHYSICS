@@ -291,6 +291,44 @@ test("authority failure and stale review fail closed before apply", async () => 
   }
 });
 
+test("Access Code generation endpoint preserves owner authority and exact input", async () => {
+  let permitted = false;
+  let calls = 0;
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: {} as Firestore,
+    ownerUid: "trusted-owner",
+    projectId: "demo-at-in-physics",
+    now: () => new Date("2030-01-01T00:00:00.000Z"),
+    authorize: async () => { if (!permitted) throw new Error("denied"); },
+    generateAccessCode: async (_db, courseId, expiresAt, trustedNow) => {
+      calls += 1;
+      assert.equal(courseId, "future-course");
+      assert.equal(expiresAt, null);
+      assert.equal(trustedNow.toISOString(), "2030-01-01T00:00:00.000Z");
+      return { code: "[REDACTED]", courseId: "future-course", expiresAt: null };
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const post = (value: unknown) => fetch(origin + "/api/access-codes/create", {
+    method: "POST",
+    headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests },
+    body: JSON.stringify(value),
+  });
+  try {
+    assert.equal((await post({ courseId: "future-course", expiresAt: null })).status, 400);
+    permitted = true;
+    assert.equal((await post({ courseId: "future-course", expiresAt: null, userId: "student" })).status, 400);
+    const response = await post({ courseId: "future-course", expiresAt: null });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { accessCode: { code: "[REDACTED]", courseId: "future-course", expiresAt: null } });
+    assert.equal(calls, 1);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("creation endpoints pass only validated minimum contracts to trusted services", async () => {
   const courses: CourseCreationOptions[] = [];
   const modules: ModuleCreationOptions[] = [];

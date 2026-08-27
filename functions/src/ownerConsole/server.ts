@@ -72,6 +72,7 @@ import {
   type OwnerVerifiedDeployment,
 } from "./videoBinding.js";
 import { recoverOwnerExistingDeployment } from "./videoRecovery.js";
+import { createAccessCode, type GenerateAccessCodeResult } from "../accessCodes/accessCodes.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -106,6 +107,7 @@ export type OwnerConsoleDependencies = Readonly<{
   createBindingReview?: typeof createOwnerBindingReview;
   applyBindingReview?: typeof applyOwnerBindingReview;
   recoverExistingDeployment?: typeof recoverOwnerExistingDeployment;
+  generateAccessCode?: typeof createAccessCode;
 }>;
 
 type Review = {
@@ -240,6 +242,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const applyBindingReview = deps.applyBindingReview ?? applyOwnerBindingReview;
   const recoverExistingDeployment =
     deps.recoverExistingDeployment ?? recoverOwnerExistingDeployment;
+  const generateAccessCode = deps.generateAccessCode ?? createAccessCode;
   const preparedVideos = new Map<string, OwnerPreparedVideo>();
   const videoReleases = new Map<string, OwnerReleaseReview>();
   const preflightedVideoReleases = new Set<string>();
@@ -371,6 +374,17 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         )
           return fail(res, 415);
         const input = await body(req);
+        if (url.pathname === "/api/access-codes/create") {
+          exactInput(input, ["courseId", "expiresAt"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const result: GenerateAccessCodeResult = await generateAccessCode(
+            deps.db,
+            input.courseId,
+            input.expiresAt,
+            now(),
+          );
+          return send(res, 200, { accessCode: result });
+        }
         if (url.pathname === "/api/video/release") {
           exactInput(input, ["preparationId"]);
           await authorize(deps.auth, deps.ownerUid);

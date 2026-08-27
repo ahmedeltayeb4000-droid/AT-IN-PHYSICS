@@ -835,6 +835,19 @@ test("active non-expiring Enrollment allows Module read", async () => {
   await assertSucceeds(getDoc(doc(authenticatedDb(CURRENT_UID), path)));
 });
 
+test("Access Code-produced Enrollment satisfies the existing Course authorization contract", async () => {
+  await seedDocuments({
+    "courses/mechanics/modules/motion": { title: "Motion", order: 1 },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID, "mechanics", {
+      source: "access_code",
+      grantedBy: "access-code-service",
+    }),
+  });
+  await assertSucceeds(
+    getDoc(doc(authenticatedDb(CURRENT_UID), "courses/mechanics/modules/motion")),
+  );
+});
+
 test("active future-expiring Enrollment allows Module read", async () => {
   const path = "courses/mechanics/modules/motion";
   await seedDocuments({
