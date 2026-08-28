@@ -10,6 +10,7 @@ import {
   type DashboardEnrollmentState,
 } from "../../features/enrollments/dashboardEnrollmentViewModel";
 import { useMyEnrollments } from "../../features/enrollments/useMyEnrollments";
+import { AccessCodeActivationCard } from "../../features/accessCodes/AccessCodeActivationCard";
 
 const enrollmentStatePresentation: Record<
   DashboardEnrollmentState,
@@ -73,6 +74,8 @@ export function DashboardPage() {
         <p className="mt-2 text-text-muted">
           Your course enrollments and access status.
         </p>
+
+        <AccessCodeActivationCard />
 
         {isLoading ? (
           <div

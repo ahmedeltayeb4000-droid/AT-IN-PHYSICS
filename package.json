@@ -10,6 +10,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "frontend:test": "node --experimental-strip-types --test test/access-code.frontend.test.mjs test/enrollment.frontend.test.mjs test/encrypted-video.frontend.test.mjs test/admin.frontend.test.mjs",
+    "frontend:test:access-code": "node --experimental-strip-types --test test/access-code.frontend.test.mjs",
     "frontend:test:admin": "node --experimental-strip-types --test test/admin.frontend.test.mjs",
     "frontend:test:encrypted-video": "node --experimental-strip-types --test test/encrypted-video.frontend.test.mjs",
     "frontend:test:browser": "playwright test",
