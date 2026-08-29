@@ -10,6 +10,9 @@ import {
 } from "../enrollments/validation.js";
 import {
   SESSION_DISCOVERY_DOCUMENT_ID,
+  FREE_SESSION_DISCOVERY_DOCUMENT_ID,
+  buildFreeSessionDiscoveryManifest,
+  freeSessionDiscoveryManifestsEqual,
   buildSessionDiscoveryManifest,
   sessionDiscoveryManifestsEqual,
   validateSessionDiscoveryManifest,
@@ -155,6 +158,8 @@ export function derivePublicationManifest(
       ...(Object.prototype.hasOwnProperty.call(session, "releaseAt")
         ? { releaseAt: (session.releaseAt as Timestamp).toDate() }
         : {}),
+      title: session.title,
+      isFree: session.isFree === true,
     };
     if (id === targetId) targetFound = true;
     return record;
@@ -198,9 +203,12 @@ export async function runSessionPublicationService(
   const manifestRef = moduleRef
     .collection("sessionDiscovery")
     .doc(SESSION_DISCOVERY_DOCUMENT_ID);
+  const freeManifestRef = moduleRef
+    .collection("sessionDiscovery")
+    .doc(FREE_SESSION_DISCOVERY_DOCUMENT_ID);
 
   const inspect = async (): Promise<SessionPublicationInspection> => {
-    const [course, module, session, access, sessions, manifest] =
+    const [course, module, session, access, sessions, manifest, freeManifest] =
       await Promise.all([
         courseRef.get(),
         moduleRef.get(),
@@ -208,6 +216,7 @@ export async function runSessionPublicationService(
         accessRef.get(),
         sessionsQuery.get(),
         manifestRef.get(),
+        freeManifestRef.get(),
       ]);
     validateHierarchy(
       course.exists,
@@ -225,6 +234,22 @@ export async function runSessionPublicationService(
       ids.sessionId,
       trustedNow,
     );
+    const proposedFree = buildFreeSessionDiscoveryManifest(
+      sessions.docs.map((doc) => {
+        const data = validateSessionForVideoPublication(doc.data());
+        return {
+          id: doc.id,
+          title: data.title,
+          order: data.order,
+          publicationStatus: doc.id === ids.sessionId ? "published" : data.publicationStatus,
+          isFree: data.isFree === true,
+          ...(Object.prototype.hasOwnProperty.call(data, "releaseAt")
+            ? { releaseAt: (data.releaseAt as Timestamp).toDate() }
+            : {}),
+        };
+      }),
+      trustedNow,
+    );
     const currentManifest = manifest.exists
       ? validateSessionDiscoveryManifest(manifest.data())
       : null;
@@ -234,6 +259,8 @@ export async function runSessionPublicationService(
       currentManifest,
       proposed,
       trustedNow,
+      freeManifest.exists ? freeManifest.data() : null,
+      proposedFree,
     );
   };
 
@@ -248,6 +275,7 @@ export async function runSessionPublicationService(
     const access = await transaction.get(accessRef);
     const sessions = await transaction.get(sessionsQuery);
     const manifest = await transaction.get(manifestRef);
+    const freeManifest = await transaction.get(freeManifestRef);
     validateHierarchy(
       course.exists,
       course.data(),
@@ -264,6 +292,22 @@ export async function runSessionPublicationService(
       ids.sessionId,
       trustedNow,
     );
+    const proposedFree = buildFreeSessionDiscoveryManifest(
+      sessions.docs.map((doc) => {
+        const data = validateSessionForVideoPublication(doc.data());
+        return {
+          id: doc.id,
+          title: data.title,
+          order: data.order,
+          publicationStatus: doc.id === ids.sessionId ? "published" : data.publicationStatus,
+          isFree: data.isFree === true,
+          ...(Object.prototype.hasOwnProperty.call(data, "releaseAt")
+            ? { releaseAt: (data.releaseAt as Timestamp).toDate() }
+            : {}),
+        };
+      }),
+      trustedNow,
+    );
     const existingManifest = manifest.exists
       ? validateSessionDiscoveryManifest(manifest.data())
       : null;
@@ -271,13 +315,18 @@ export async function runSessionPublicationService(
     const manifestChange =
       existingManifest === null ||
       !sessionDiscoveryManifestsEqual(existingManifest, proposed);
+    const freeManifestChange =
+      !freeManifest.exists ||
+      !freeSessionDiscoveryManifestsEqual(freeManifest.data(), proposedFree);
     if (sessionChange)
       transaction.update(sessionRef, { publicationStatus: "published" });
     if (manifestChange)
       transaction.set(manifestRef, { sessionIds: [...proposed.sessionIds] });
+    if (freeManifestChange)
+      transaction.set(freeManifestRef, { sessions: proposedFree.sessions.map((item) => ({ ...item })) });
     return sessionChange
       ? ("published" as const)
-      : manifestChange
+      : manifestChange || freeManifestChange
         ? ("reconciled" as const)
         : ("already-current" as const);
   });
@@ -314,11 +363,14 @@ function inspection(
   currentManifest: SessionDiscoveryManifest | null,
   proposed: SessionDiscoveryManifest,
   trustedNow: Date,
+  currentFreeManifest: unknown,
+  proposedFreeManifest: ReturnType<typeof buildFreeSessionDiscoveryManifest>,
 ): SessionPublicationInspection {
   const sessionChangeRequired = current.publicationStatus === "draft";
   const discoveryChangeRequired =
     currentManifest === null ||
-    !sessionDiscoveryManifestsEqual(currentManifest, proposed);
+    !sessionDiscoveryManifestsEqual(currentManifest, proposed) ||
+    !freeSessionDiscoveryManifestsEqual(currentFreeManifest, proposedFreeManifest);
   return {
     sessionPath,
     currentPublicationState: current.publicationStatus as "draft" | "published",

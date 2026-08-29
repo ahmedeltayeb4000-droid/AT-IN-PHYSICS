@@ -12,6 +12,10 @@ import {
   runSessionPublicationService,
   type SessionPublicationOptions,
 } from "../src/tooling/sessionPublication.js";
+import {
+  applySessionFreeStatus,
+  reviewSessionFreeStatus,
+} from "../src/ownerConsole/sessionFreeStatus.js";
 
 const PROJECT_ID = "demo-at-in-physics";
 const NOW = new Date("2030-01-01T00:00:00.000Z");
@@ -481,4 +485,31 @@ test("video binding is validated without mutation and cross-hierarchy documents 
     ),
     true,
   );
+});
+
+test("trusted Free/Paid change validates hierarchy, revision, and atomically refreshes the public projection", async () => {
+  const courseId = "free-status-course";
+  const moduleId = "module";
+  const sessionId = "sample";
+  await seed(courseId, moduleId, sessionId, sessionData({
+    title: "Free Sample",
+    publicationStatus: "published",
+  }));
+  const target = { courseId, moduleId, sessionId };
+  const freeReview = await reviewSessionFreeStatus(db, target, true);
+  assert.equal(freeReview.currentIsFree, false);
+  await applySessionFreeStatus(db, freeReview, NOW);
+  const sessionRef = db.doc(`courses/${courseId}/modules/${moduleId}/sessions/${sessionId}`);
+  const freeRef = db.doc(`courses/${courseId}/modules/${moduleId}/sessionDiscovery/free`);
+  assert.equal((await sessionRef.get()).data()?.isFree, true);
+  assert.deepEqual((await freeRef.get()).data(), {
+    sessions: [{ id: sessionId, title: "Free Sample", order: 0 }],
+  });
+  const paidReview = await reviewSessionFreeStatus(db, target, false);
+  await applySessionFreeStatus(db, paidReview, NOW);
+  assert.equal((await sessionRef.get()).data()?.isFree, false);
+  assert.deepEqual((await freeRef.get()).data(), { sessions: [] });
+  const stale = await reviewSessionFreeStatus(db, target, true);
+  await sessionRef.update({ title: "Changed after review" });
+  await assert.rejects(applySessionFreeStatus(db, stale, NOW), /changed after review/);
 });

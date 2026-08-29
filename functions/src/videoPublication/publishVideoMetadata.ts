@@ -89,6 +89,7 @@ export function validateSessionForVideoPublication(
     data,
     "videoAssetId",
   );
+  const hasIsFree = Object.prototype.hasOwnProperty.call(data, "isFree");
 
   if (
     typeof data.title !== "string" ||
@@ -98,7 +99,8 @@ export function validateSessionForVideoPublication(
     data.order < 0 ||
     (data.publicationStatus !== "draft" &&
       data.publicationStatus !== "published") ||
-    (hasReleaseAt && !(data.releaseAt instanceof Timestamp))
+    (hasReleaseAt && !(data.releaseAt instanceof Timestamp)) ||
+    (hasIsFree && typeof data.isFree !== "boolean")
   ) {
     throw new Error("Existing Session is malformed.");
   }

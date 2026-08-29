@@ -208,12 +208,13 @@ service cloud.firestore {
         && isValidModuleData(moduleId, get(modulePath).data)
         && data.keys().hasAll(["title", "order"])
         && data.keys().hasAll(["publicationStatus"])
-        && data.keys().hasOnly(["title", "order", "publicationStatus"])
+        && data.keys().hasOnly(["title", "order", "publicationStatus", "isFree"])
         && isValidCourseText(data.title, 160)
         && data.order is int
         && data.order >= 0
         && data.order <= 9007199254740991
-        && data.publicationStatus == "draft";
+        && data.publicationStatus == "draft"
+        && (!data.keys().hasAny(["isFree"]) || data.isFree == false);
     }
 
     function isSessionVisible(sessionData) {
@@ -226,6 +227,19 @@ service cloud.firestore {
             && sessionData.releaseAt <= request.time
           )
         );
+    }
+
+    function isPublicFreeSession(courseId, sessionData) {
+      return isPublishedTrustedCourse(courseId)
+        && sessionData.keys().hasAll(["isFree"])
+        && sessionData.isFree == true
+        && isSessionVisible(sessionData);
+    }
+
+    function isFreeSessionDiscoveryManifest() {
+      return resource.data.keys().hasAll(["sessions"])
+        && resource.data.keys().hasOnly(["sessions"])
+        && resource.data.sessions is list;
     }
 
     function isValidVideoAssetId(value) {
@@ -362,20 +376,24 @@ service cloud.firestore {
       }
 
       match /modules/{moduleId} {
-        allow get: if canReadCourseContent(courseId) || isOwner();
-        allow list: if canReadCourseContent(courseId) || isOwner();
+        allow get: if canReadCourseContent(courseId) || isPublishedTrustedCourse(courseId) || isOwner();
+        allow list: if canReadCourseContent(courseId) || isPublishedTrustedCourse(courseId) || isOwner();
         allow create: if isOwner() && isValidCreatedModule(courseId, moduleId);
         allow update, delete: if false;
 
         match /sessionDiscovery/{discoveryId} {
           allow get: if discoveryId == "visible"
             && canReadCourseContent(courseId)
-            && isSessionDiscoveryManifest();
+            && isSessionDiscoveryManifest()
+            || discoveryId == "free"
+            && isPublishedTrustedCourse(courseId)
+            && isFreeSessionDiscoveryManifest();
+          allow list, create, update, delete: if false;
         }
 
         match /sessions/{sessionId} {
           allow get: if (
-              canReadCourseContent(courseId)
+              (canReadCourseContent(courseId) || isPublicFreeSession(courseId, resource.data))
               && isSessionVisible(resource.data)
             ) || isOwner();
           allow list: if isOwner();
@@ -432,7 +450,16 @@ service cloud.firestore {
 
           match /videoAccess/{accessId} {
             allow get: if accessId == "primary"
-              && canReadCourseContent(courseId)
+              && (
+                canReadCourseContent(courseId)
+                || (
+                  exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
+                  && isPublicFreeSession(
+                    courseId,
+                    get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data
+                  )
+                )
+              )
               && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
               && isSessionVisible(
                 get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data

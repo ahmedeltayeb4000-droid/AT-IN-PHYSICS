@@ -8,6 +8,7 @@ import { useAuth } from "../../features/auth/AuthContext";
 import {
   getCourseBySlug,
   getSessionDetail,
+  getPublicFreeSessionDetail,
 } from "../../features/courses/courseRepository";
 import {
   parseSessionDetailRouteParams,
@@ -156,6 +157,7 @@ export function SessionDetailPage() {
         evaluatedAt,
       ),
   );
+  const accessReady = Boolean(courseQuery.data) && !enrollmentLoading;
   const sessionDetailQuery = useQuery({
     queryKey: [
       "courses",
@@ -165,13 +167,10 @@ export function SessionDetailPage() {
       "sessions",
       params?.sessionId,
     ],
-    queryFn: () =>
-      getSessionDetail(
-        courseQuery.data!,
-        params!.moduleId,
-        params!.sessionId,
-      ),
-    enabled: entitled,
+    queryFn: () => entitled
+      ? getSessionDetail(courseQuery.data!, params!.moduleId, params!.sessionId)
+      : getPublicFreeSessionDetail(courseQuery.data!, params!.moduleId, params!.sessionId),
+    enabled: params !== null && accessReady,
   });
   const courseBackTo = params ? `/courses/${params.slug}` : "/dashboard";
 
@@ -181,24 +180,6 @@ export function SessionDetailPage() {
         title="Lesson unavailable"
         description="This lesson address is invalid."
         backTo="/dashboard"
-      />
-    );
-  }
-  if (authLoading) {
-    return (
-      <StatusPanel
-        title="Checking your account"
-        description="Please wait while your account is verified."
-        backTo="/"
-      />
-    );
-  }
-  if (!user) {
-    return (
-      <StatusPanel
-        title="Sign in required"
-        description="Sign in to open this lesson."
-        backTo="/login"
       />
     );
   }
@@ -238,16 +219,16 @@ export function SessionDetailPage() {
       />
     );
   }
-  if (enrollmentError) {
-    return (
-      <StatusPanel
-        title="Unable to verify course access"
-        description="Please try again later."
-        backTo={courseBackTo}
-      />
-    );
-  }
-  if (!entitled) {
+  if (!entitled && sessionDetailQuery.isError) {
+    if (enrollmentError) {
+      return (
+        <StatusPanel
+          title="Unable to verify course access"
+          description="Please try again later."
+          backTo={courseBackTo}
+        />
+      );
+    }
     const copy = getUnentitledCopy(
       enrollmentsQuery.data ?? [],
       courseQuery.data.id,
@@ -282,6 +263,7 @@ export function SessionDetailPage() {
   }
 
   const { course, module, session } = sessionDetailQuery.data;
+  const publicFreeAccess = !entitled && session.isFree;
   return (
     <PageTransition>
       <Section>
@@ -300,11 +282,14 @@ export function SessionDetailPage() {
               <h1 className="mt-4 text-4xl font-bold text-text sm:text-5xl">
                 {session.title}
               </h1>
+              {publicFreeAccess ? (
+                <span className="mt-4 inline-flex rounded-full bg-accent px-3 py-1 text-xs font-bold text-white">FREE</span>
+              ) : null}
               <p className="mt-3 text-text-muted">{course.title}</p>
               {session.videoAssetId ? (
                 <SessionVideoPlayer
                   session={session}
-                  watermark={protectedWatermark}
+                  watermark={publicFreeAccess ? { mode: "none" } : protectedWatermark}
                 />
               ) : null}
               <div className="mt-10 rounded-xl border border-white/10 bg-white/[.03] p-6">
@@ -319,11 +304,13 @@ export function SessionDetailPage() {
                   </p>
                 )}
               </div>
-              <SessionResourceList
-                courseId={course.id}
-                moduleId={module.id}
-                sessionId={session.id}
-              />
+              {entitled ? (
+                <SessionResourceList
+                  courseId={course.id}
+                  moduleId={module.id}
+                  sessionId={session.id}
+                />
+              ) : null}
             </GlassCard>
           </div>
         </PageContainer>

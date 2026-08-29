@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildSessionDiscoveryManifest,
+  buildFreeSessionDiscoveryManifest,
   parseSessionDiscoveryRefreshInput,
   sessionDiscoveryManifestsEqual,
   sessionIsStudentVisible,
@@ -97,6 +98,20 @@ test("manifest excludes draft, future, and malformed Sessions", () => {
     NOW,
   );
   assert.deepEqual(manifest.sessionIds, ["visible"]);
+});
+
+test("Free Session projection treats absent and false as paid and includes only released true state", () => {
+  const manifest = buildFreeSessionDiscoveryManifest(
+    [
+      session({ id: "absent", title: "Absent" }),
+      session({ id: "false", title: "False", isFree: false }),
+      session({ id: "free", title: "Free", isFree: true }),
+      session({ id: "draft-free", title: "Draft", isFree: true, publicationStatus: "draft" }),
+      session({ id: "future-free", title: "Future", isFree: true, releaseAt: new Date("2031-01-01T00:00:00.000Z") }),
+    ],
+    NOW,
+  );
+  assert.deepEqual(manifest, { sessions: [{ id: "free", title: "Free", order: 1 }] });
 });
 
 test("empty visible set produces an empty manifest", () => {

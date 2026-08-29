@@ -727,6 +727,14 @@ test("owner creates only the exact trusted draft Session beneath valid parents",
       publicationStatus: "draft",
     }),
   );
+  await assertSucceeds(
+    setDoc(doc(ownerDb(), `${path}-explicit-paid`), {
+      title: "Explicit Paid",
+      order: 1,
+      publicationStatus: "draft",
+      isFree: false,
+    }),
+  );
   const snapshot = await assertSucceeds(getDoc(doc(ownerDb(), path)));
   assert.deepEqual(snapshot.data(), {
     title: "Introduction",
@@ -2277,4 +2285,81 @@ test("all protected resource client writes and collection-group enumeration are 
   }
   await assertFails(getDocs(collectionGroup(authenticatedDb(CURRENT_UID), "resources")));
   await assertFails(getDocs(collectionGroup(authenticatedDb(CURRENT_UID), "access")));
+});
+
+test("public Free Session discovery and exact released Session access are allowed without exposing paid discovery", async () => {
+  const coursePath = "courses/mechanics";
+  const modulePath = `${coursePath}/modules/motion`;
+  const freePath = `${modulePath}/sessionDiscovery/free`;
+  const freeSessionPath = `${modulePath}/sessions/free-introduction`;
+  await seedDocuments({
+    [coursePath]: courseDocument("mechanics", { status: "published" }),
+    [modulePath]: { title: "Motion", order: 1 },
+    [freePath]: { sessions: [{ id: "free-introduction", title: "Free Introduction", order: 1 }] },
+    [`${modulePath}/sessionDiscovery/visible`]: { sessionIds: ["free-introduction", "paid-session"] },
+    [freeSessionPath]: { title: "Free Introduction", order: 1, publicationStatus: "published", isFree: true, lessonText: "Public sample lesson." },
+    [`${modulePath}/sessions/paid-session`]: { title: "Paid", order: 2, publicationStatus: "published", isFree: false },
+  });
+  const db = unauthenticatedDb();
+  await assertSucceeds(getDocs(collection(db, `${coursePath}/modules`)));
+  await assertSucceeds(getDoc(doc(db, freePath)));
+  await assertSucceeds(getDoc(doc(db, freeSessionPath)));
+  await assertFails(getDoc(doc(db, `${modulePath}/sessionDiscovery/visible`)));
+  await assertFails(getDoc(doc(db, `${modulePath}/sessions/paid-session`)));
+  await assertFails(getDocs(collection(db, `${modulePath}/sessions`)));
+  await assertFails(getDocs(collection(db, `${modulePath}/sessionDiscovery`)));
+});
+
+test("Free Session access fails closed for absent false draft and future state while paid enrollment behavior remains unchanged", async () => {
+  const base = "courses/mechanics/modules/motion/sessions";
+  await seedDocuments({
+    [`${base}/absent`]: { title: "Absent", order: 0, publicationStatus: "published" },
+    [`${base}/false`]: { title: "False", order: 1, publicationStatus: "published", isFree: false },
+    [`${base}/draft`]: { title: "Draft", order: 2, publicationStatus: "draft", isFree: true },
+    [`${base}/future`]: { title: "Future", order: 3, publicationStatus: "published", isFree: true, releaseAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")) },
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  });
+  for (const id of ["absent", "false", "draft", "future"]) {
+    await assertFails(getDoc(doc(unauthenticatedDb(), `${base}/${id}`)));
+  }
+  await assertFails(getDoc(doc(authenticatedDb("student-missing"), `${base}/false`)));
+  await assertSucceeds(getDoc(doc(authenticatedDb(CURRENT_UID), `${base}/false`)));
+});
+
+test("Free video permits only exact primary get while paid video and all protected PDFs retain enrollment authority", async () => {
+  const freeSessionPath = "courses/mechanics/modules/motion/sessions/free-video";
+  const freeAccessPath = `${freeSessionPath}/videoAccess/primary`;
+  await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
+    [freeSessionPath]: videoSession({ isFree: true }),
+    [freeAccessPath]: videoAccess(),
+    [VIDEO_SESSION_PATH]: videoSession({ isFree: false }),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [`${freeSessionPath}/resources/${RESOURCE_ID}`]: protectedResourceMetadata("session", {
+      ciphertextRoute: `/protected-resources/courses/mechanics/modules/motion/sessions/free-video/resources/${RESOURCE_ID}.atr1`,
+    }),
+    [`${freeSessionPath}/resources/${RESOURCE_ID}/access/primary`]: protectedResourceAccess(),
+  });
+  const db = unauthenticatedDb();
+  await assertSucceeds(getDoc(doc(db, freeAccessPath)));
+  await assertFails(getDocs(collection(db, `${freeSessionPath}/videoAccess`)));
+  await assertFails(getDoc(doc(db, VIDEO_ACCESS_PATH)));
+  await assertFails(getDocs(collection(db, `${freeSessionPath}/resources`)));
+  await assertFails(getDoc(doc(db, `${freeSessionPath}/resources/${RESOURCE_ID}/access/primary`)));
+});
+
+test("browsers cannot create or promote isFree through Firestore", async () => {
+  const modulePath = "courses/mechanics/modules/motion";
+  const sessionPath = `${modulePath}/sessions/existing`;
+  await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics"),
+    [modulePath]: { title: "Motion", order: 1 },
+    [sessionPath]: { title: "Existing", order: 0, publicationStatus: "draft", isFree: false },
+  });
+  for (const db of [authenticatedDb(CURRENT_UID), ownerDb()]) {
+    await assertFails(updateDoc(doc(db, sessionPath), { isFree: true }));
+    await assertFails(setDoc(doc(db, `${modulePath}/sessions/forged-free`), {
+      title: "Forged Free", order: 1, publicationStatus: "draft", isFree: true,
+    }));
+  }
 });

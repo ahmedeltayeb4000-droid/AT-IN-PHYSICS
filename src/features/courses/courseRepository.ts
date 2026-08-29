@@ -13,6 +13,8 @@ import {
 import { firebaseDb } from "../../lib/firebase";
 import {
   SESSION_DISCOVERY_DOCUMENT_ID,
+  FREE_SESSION_DISCOVERY_DOCUMENT_ID,
+  mapFreeSessionDiscoveryManifest,
   mapSessionDiscoveryManifest,
 } from "./sessionDiscovery";
 import { buildCourseCurriculum, type CourseCurriculumModule } from "./courseCurriculum";
@@ -135,6 +137,61 @@ export async function getCourseCurriculum(
     modules.map((module) => getModuleSessions(courseId, module.id)),
   );
   return buildCourseCurriculum(modules, sessionsByModule);
+}
+
+export type PublicFreeSession = {
+  readonly course: Course;
+  readonly module: Module;
+  readonly id: string;
+  readonly title: string;
+  readonly order: number;
+};
+
+export async function getPublicFreeSessions(
+  course: Course,
+): Promise<PublicFreeSession[]> {
+  const modules = await getCourseModules(course.id);
+  const manifests = await Promise.all(
+    modules.map(async (module) => {
+      const snapshot = await getDoc(
+        doc(firebaseDb, "courses", course.id, "modules", module.id, "sessionDiscovery", FREE_SESSION_DISCOVERY_DOCUMENT_ID),
+      );
+      if (!snapshot.exists()) return [];
+      return mapFreeSessionDiscoveryManifest(snapshot.data()).map((session) => ({
+        course,
+        module,
+        ...session,
+      }));
+    }),
+  );
+  return manifests.flat().sort((left, right) =>
+    left.module.order - right.module.order || left.order - right.order || left.id.localeCompare(right.id, "en"),
+  );
+}
+
+export async function getPublicFreeSessionDetail(
+  course: Course,
+  moduleId: string,
+  sessionId: string,
+): Promise<SessionDetail> {
+  const module = await getModuleById(course.id, moduleId);
+  if (!module) throw new SessionDetailUnavailableError("module-unavailable");
+  const manifestSnapshot = await getDoc(
+    doc(firebaseDb, "courses", course.id, "modules", moduleId, "sessionDiscovery", FREE_SESSION_DISCOVERY_DOCUMENT_ID),
+  );
+  if (!manifestSnapshot.exists()) {
+    throw new SessionDetailUnavailableError("session-not-discovered");
+  }
+  const freeIds = mapFreeSessionDiscoveryManifest(manifestSnapshot.data()).map((item) => item.id);
+  if (!freeIds.includes(sessionId)) {
+    throw new SessionDetailUnavailableError("session-not-discovered");
+  }
+  const session = await getSessionById(course.id, moduleId, sessionId);
+  const detail = composeSessionDetail(course, module, freeIds, sessionId, session);
+  if (!detail.session.isFree) {
+    throw new SessionDetailUnavailableError("session-unavailable");
+  }
+  return detail;
 }
 
 export async function getModuleSessionIds(

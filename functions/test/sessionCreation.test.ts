@@ -36,6 +36,7 @@ test("valid parser returns the minimum draft Session and defaults to dry run", (
     title: "Introduction to Motion",
     order: 0,
     publicationStatus: "draft",
+    isFree: false,
   });
   assert.equal(parseSessionCreationArgs([...VALID, "--apply"]).apply, true);
 });

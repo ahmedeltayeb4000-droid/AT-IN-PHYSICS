@@ -29,12 +29,14 @@ export type SessionCreationOptions = {
   readonly title: string;
   readonly order: number;
   readonly apply: boolean;
+  readonly isFree?: boolean;
 };
 
 export type TrustedSessionCreationDocument = {
   readonly title: string;
   readonly order: number;
   readonly publicationStatus: "draft";
+  readonly isFree?: boolean;
 };
 
 export type SessionCreationResult = {
@@ -126,6 +128,7 @@ export function buildTrustedSessionCreationDocument(
     ),
     order: validateModuleOrder(options.order),
     publicationStatus: "draft",
+    isFree: options.isFree === true,
   };
 }
 
@@ -134,7 +137,12 @@ export function inspectExistingSession(
   expected: TrustedSessionCreationDocument,
 ): "MISSING" | "IDENTICAL" {
   if (data === undefined) return "MISSING";
-  if (!isDeepStrictEqual(data, expected))
+  const normalized =
+    expected.isFree === false &&
+    !Object.prototype.hasOwnProperty.call(data, "isFree")
+      ? { ...data, isFree: false }
+      : data;
+  if (!isDeepStrictEqual(normalized, expected))
     throw new Error(
       "Existing Session conflicts with the requested trusted state.",
     );

@@ -52,6 +52,7 @@ import { VIDEO_DEPLOY_CLIENT_JS } from "./videoDeployClient.js";
 import { VIDEO_BINDING_CLIENT_JS } from "./videoBindingClient.js";
 import { VIDEO_RECOVERY_CLIENT_JS } from "./videoRecoveryClient.js";
 import { ACCESS_CODE_CLIENT_JS } from "./accessCodeClient.js";
+import { SESSION_FREE_CLIENT_JS } from "./sessionFreeClient.js";
 import {
   preflightOwnerHostingRelease,
   prepareOwnerHostingRelease,
@@ -92,6 +93,12 @@ import {
   type OwnerResourceRelease,
   type OwnerVerifiedResourceDeployment,
 } from "./resourceLifecycle.js";
+import {
+  applySessionFreeStatus,
+  reviewSessionFreeStatus,
+  FREE_STATUS_PUBLISHED_CONFIRMATION,
+  type SessionFreeStatusReview,
+} from "./sessionFreeStatus.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -135,6 +142,8 @@ export type OwnerConsoleDependencies = Readonly<{
   retryResourceVerification?: typeof retryOwnerResourceVerification;
   createResourceBindingReview?: typeof createOwnerResourceBindingReview;
   applyResourceBinding?: typeof applyOwnerResourceBinding;
+  reviewFreeStatus?: typeof reviewSessionFreeStatus;
+  applyFreeStatus?: typeof applySessionFreeStatus;
 }>;
 
 type Review = {
@@ -294,6 +303,9 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const retryResourceVerification = deps.retryResourceVerification ?? retryOwnerResourceVerification;
   const createResourceBindingReview = deps.createResourceBindingReview ?? createOwnerResourceBindingReview;
   const applyResourceBinding = deps.applyResourceBinding ?? applyOwnerResourceBinding;
+  const reviewFreeStatus = deps.reviewFreeStatus ?? reviewSessionFreeStatus;
+  const applyFreeStatus = deps.applyFreeStatus ?? applySessionFreeStatus;
+  const freeStatusReviews = new Map<string, { review: SessionFreeStatusReview; used: boolean }>();
   const preparedVideos = new Map<string, OwnerPreparedVideo>();
   const videoReleases = new Map<string, OwnerReleaseReview>();
   const preflightedVideoReleases = new Set<string>();
@@ -338,7 +350,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}`,
+          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
@@ -549,6 +561,57 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
             resourceReleases.delete(releaseId);
             preflightedResourceReleases.delete(releaseId);
             preparedResources.delete(preparationId);
+            return send(res, 200, { result });
+          } catch (error) {
+            record.used = false;
+            throw error;
+          }
+        }
+        if (url.pathname === "/api/sessions/free/review") {
+          exactInput(input, ["courseId", "moduleId", "sessionId", "isFree"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const review = await reviewFreeStatus(
+            deps.db,
+            {
+              courseId: validateCourseId(input.courseId),
+              moduleId: validateCourseId(input.moduleId),
+              sessionId: validateCourseId(input.sessionId),
+            },
+            input.isFree,
+          );
+          const reviewId = randomBytes(24).toString("base64url");
+          freeStatusReviews.set(reviewId, { review, used: false });
+          return send(res, 200, {
+            reviewId,
+            review: {
+              currentIsFree: review.currentIsFree,
+              proposedIsFree: review.proposedIsFree,
+              publicationStatus: review.publicationStatus,
+              requiresConfirmation: review.publicationStatus === "published",
+              confirmationPhrase:
+                review.publicationStatus === "published"
+                  ? FREE_STATUS_PUBLISHED_CONFIRMATION
+                  : null,
+            },
+          });
+        }
+        if (url.pathname === "/api/sessions/free/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const reviewId = requiredString(input.reviewId);
+          const record = freeStatusReviews.get(reviewId);
+          if (!record || record.used) return fail(res, 409);
+          if (
+            (record.review.publicationStatus === "published" &&
+              input.confirmation !== FREE_STATUS_PUBLISHED_CONFIRMATION) ||
+            (record.review.publicationStatus !== "published" &&
+              input.confirmation !== "")
+          )
+            return fail(res, 400);
+          record.used = true;
+          try {
+            const result = await applyFreeStatus(deps.db, record.review, now());
+            freeStatusReviews.delete(reviewId);
             return send(res, 200, { result });
           } catch (error) {
             record.used = false;
@@ -818,13 +881,13 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           });
         }
         if (url.pathname === "/api/sessions/create") {
-          exactInput(input, [
-            "courseId",
-            "moduleId",
-            "sessionId",
-            "title",
-            "order",
-          ]);
+          exactInput(
+            input,
+            Object.prototype.hasOwnProperty.call(input, "isFree")
+              ? ["courseId", "moduleId", "sessionId", "title", "order", "isFree"]
+              : ["courseId", "moduleId", "sessionId", "title", "order"],
+          );
+          if (Object.prototype.hasOwnProperty.call(input, "isFree") && typeof input.isFree !== "boolean") return fail(res, 400);
           await authorize(deps.auth, deps.ownerUid);
           const result = await createSession(
             deps.auth,
@@ -836,6 +899,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
               title: requiredString(input.title),
               order: validateModuleOrder(input.order),
               apply: true,
+              isFree: input.isFree === true,
             },
             deps.ownerUid,
           );

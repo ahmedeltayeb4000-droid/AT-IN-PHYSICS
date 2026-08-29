@@ -53,6 +53,7 @@ function isValidSession(session: Session): boolean {
     session.order >= 0 &&
     (session.publicationStatus === "draft" ||
       session.publicationStatus === "published") &&
+    (session.isFree === undefined || typeof session.isFree === "boolean") &&
     (session.releaseAt === undefined ||
       (session.releaseAt.length > 0 &&
         Number.isFinite(Date.parse(session.releaseAt)))) &&

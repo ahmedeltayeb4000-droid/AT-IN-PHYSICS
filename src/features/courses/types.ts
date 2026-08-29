@@ -24,6 +24,7 @@ export type Session = {
   readonly title: string;
   readonly order: number;
   readonly publicationStatus: SessionPublicationStatus;
+  readonly isFree?: boolean;
   readonly releaseAt?: string;
   readonly lessonText?: string;
   readonly videoAssetId?: string;

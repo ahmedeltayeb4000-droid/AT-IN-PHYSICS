@@ -6,6 +6,9 @@ import {
 } from "firebase-admin/firestore";
 import {
   SESSION_DISCOVERY_DOCUMENT_ID,
+  FREE_SESSION_DISCOVERY_DOCUMENT_ID,
+  buildFreeSessionDiscoveryManifest,
+  freeSessionDiscoveryManifestsEqual,
   buildSessionDiscoveryManifest,
   parseSessionDiscoveryRefreshInput,
   sessionDiscoveryManifestsEqual,
@@ -37,6 +40,8 @@ export function trustedSessionRecordFromSnapshot(
               : null,
         }
       : {}),
+    isFree: data.isFree === true,
+    title: data.title,
   };
 }
 
@@ -56,6 +61,9 @@ export async function refreshSessionDiscoveryManifest(
   const manifestReference = moduleReference
     .collection("sessionDiscovery")
     .doc(SESSION_DISCOVERY_DOCUMENT_ID);
+  const freeManifestReference = moduleReference
+    .collection("sessionDiscovery")
+    .doc(FREE_SESSION_DISCOVERY_DOCUMENT_ID);
 
   return db.runTransaction(async (transaction) => {
     const courseSnapshot = await transaction.get(courseReference);
@@ -65,7 +73,10 @@ export async function refreshSessionDiscoveryManifest(
     if (!moduleSnapshot.exists) throw new Error("Module was not found.");
 
     const sessionsSnapshot = await transaction.get(sessionsQuery);
-    const manifestSnapshot = await transaction.get(manifestReference);
+    const [manifestSnapshot, freeManifestSnapshot] = await Promise.all([
+      transaction.get(manifestReference),
+      transaction.get(freeManifestReference),
+    ]);
     const manifest = buildSessionDiscoveryManifest(
       sessionsSnapshot.docs.map(trustedSessionRecordFromSnapshot),
       trustedNow,
@@ -73,17 +84,29 @@ export async function refreshSessionDiscoveryManifest(
     const writeNecessary =
       !manifestSnapshot.exists ||
       !sessionDiscoveryManifestsEqual(manifestSnapshot.data(), manifest);
+    const freeManifest = buildFreeSessionDiscoveryManifest(
+      sessionsSnapshot.docs.map(trustedSessionRecordFromSnapshot),
+      trustedNow,
+    );
+    const freeWriteNecessary =
+      !freeManifestSnapshot.exists ||
+      !freeSessionDiscoveryManifestsEqual(freeManifestSnapshot.data(), freeManifest);
 
     if (writeNecessary) {
       transaction.set(manifestReference, {
         sessionIds: [...manifest.sessionIds],
       });
     }
+    if (freeWriteNecessary) {
+      transaction.set(freeManifestReference, {
+        sessions: freeManifest.sessions.map((session) => ({ ...session })),
+      });
+    }
 
     return {
       ...input,
       discoveredCount: manifest.sessionIds.length,
-      writeNecessary,
+      writeNecessary: writeNecessary || freeWriteNecessary,
     };
   });
 }

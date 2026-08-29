@@ -23,6 +23,7 @@ export type OwnerSessionDto = Readonly<{
   release: "immediate" | "released" | "scheduled";
   hasLesson: boolean;
   hasVideo: boolean;
+  isFree: boolean;
 }>;
 export type TrustedRecord = Readonly<{ id: string; data: unknown }>;
 
@@ -80,6 +81,7 @@ export function buildOwnerSessionInventory(
         release,
         hasLesson: Object.prototype.hasOwnProperty.call(session, "lessonText"),
         hasVideo: Object.prototype.hasOwnProperty.call(session, "videoAssetId"),
+        isFree: session.isFree === true,
       };
     })
     .sort((a, b) => a.order - b.order || compareId(a.id, b.id));

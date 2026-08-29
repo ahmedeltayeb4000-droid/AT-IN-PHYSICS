@@ -44,6 +44,7 @@ export function mapSessionDocument(
     data,
     "videoAssetId",
   );
+  const hasIsFree = Object.prototype.hasOwnProperty.call(data, "isFree");
   if (
     typeof data.title !== "string" ||
     !data.title.trim() ||
@@ -54,7 +55,8 @@ export function mapSessionDocument(
       data.publicationStatus !== "published") ||
     (hasReleaseAt && !(data.releaseAt instanceof Timestamp)) ||
     (hasLessonText && !isValidLessonText(data.lessonText)) ||
-    (hasVideoAssetId && !isValidVideoAssetId(data.videoAssetId))
+    (hasVideoAssetId && !isValidVideoAssetId(data.videoAssetId)) ||
+    (hasIsFree && typeof data.isFree !== "boolean")
   ) {
     return malformedSession();
   }
@@ -66,6 +68,7 @@ export function mapSessionDocument(
     title: data.title,
     order: data.order,
     publicationStatus: data.publicationStatus,
+    isFree: data.isFree === true,
     ...(data.releaseAt instanceof Timestamp
       ? { releaseAt: data.releaseAt.toDate().toISOString() }
       : {}),

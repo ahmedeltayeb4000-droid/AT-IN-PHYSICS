@@ -93,6 +93,7 @@ test("inventory DTOs validate, minimize, and deterministically order trusted sta
     "hasLesson",
     "hasVideo",
     "id",
+    "isFree",
     "order",
     "publicationStatus",
     "release",
@@ -500,6 +501,7 @@ test("creation endpoints pass only validated minimum contracts to trusted servic
         title: "Speed",
         order: 1,
         apply: true,
+        isFree: false,
       },
     ]);
     for (const injected of [
@@ -1356,4 +1358,50 @@ test("Windows launcher is local-only and contains no credentials, deploy, or ser
     launcher,
     /service-account|private[-_ ]key|owner[_-]uid|firebase deploy|functions:config|0\.0\.0\.0/i,
   );
+});
+
+test("trusted Owner Free/Paid review and apply is authorized, confirmed for published Sessions, one-time, and sanitized", async () => {
+  let reviewCalls = 0;
+  let applyCalls = 0;
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: {} as Firestore,
+    ownerUid: "trusted-owner",
+    projectId: "demo-at-in-physics",
+    authorize: async () => {},
+    reviewFreeStatus: async (_db, target, isFree) => {
+      reviewCalls += 1;
+      assert.deepEqual(target, { courseId: "mechanics", moduleId: "motion", sessionId: "intro" });
+      assert.equal(isFree, true);
+      return { target, currentIsFree: false, proposedIsFree: true, publicationStatus: "published", revisionMillis: 123 };
+    },
+    applyFreeStatus: async (_db, review) => {
+      applyCalls += 1;
+      assert.equal(review.revisionMillis, 123);
+      return { isFree: true, verified: true };
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const post = (path: string, value: unknown) => fetch(origin + path, {
+    method: "POST",
+    headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests },
+    body: JSON.stringify(value),
+  });
+  try {
+    const reviewed = await post("/api/sessions/free/review", { courseId: "mechanics", moduleId: "motion", sessionId: "intro", isFree: true });
+    assert.equal(reviewed.status, 200);
+    const text = await reviewed.text();
+    assert.doesNotMatch(text, /revisionMillis|ownerUid|contentKey/);
+    const reviewId = JSON.parse(text).reviewId as string;
+    assert.equal((await post("/api/sessions/free/apply", { reviewId, confirmation: "wrong" })).status, 400);
+    assert.equal(applyCalls, 0);
+    assert.equal((await post("/api/sessions/free/apply", { reviewId, confirmation: "CHANGE PUBLISHED SESSION ACCESS" })).status, 200);
+    assert.equal((await post("/api/sessions/free/apply", { reviewId, confirmation: "CHANGE PUBLISHED SESSION ACCESS" })).status, 409);
+    assert.equal(reviewCalls, 1);
+    assert.equal(applyCalls, 1);
+    assert.equal((await post("/api/sessions/free/review", { courseId: "mechanics", moduleId: "motion", sessionId: "intro", isFree: "yes" })).status, 400);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

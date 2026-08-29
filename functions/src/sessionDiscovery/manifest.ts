@@ -1,16 +1,29 @@
 const CONTENT_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export const SESSION_DISCOVERY_DOCUMENT_ID = "visible";
+export const FREE_SESSION_DISCOVERY_DOCUMENT_ID = "free";
 
 export type TrustedSessionRecord = {
   readonly id: string;
   readonly order: unknown;
   readonly publicationStatus: unknown;
+  readonly isFree?: unknown;
   readonly releaseAt?: Date | null;
+  readonly title?: unknown;
 };
 
 export type SessionDiscoveryManifest = {
   readonly sessionIds: readonly string[];
+};
+
+export type FreeSessionDiscoveryItem = {
+  readonly id: string;
+  readonly title: string;
+  readonly order: number;
+};
+
+export type FreeSessionDiscoveryManifest = {
+  readonly sessions: readonly FreeSessionDiscoveryItem[];
 };
 
 export type SessionDiscoveryRefreshInput = {
@@ -104,6 +117,50 @@ export function buildSessionDiscoveryManifest(
       })
       .map((session) => session.id),
   };
+}
+
+export function sessionIsPublicFree(
+  session: TrustedSessionRecord,
+  trustedNow: Date,
+): boolean {
+  return session.isFree === true && sessionIsStudentVisible(session, trustedNow);
+}
+
+export function buildFreeSessionDiscoveryManifest(
+  sessions: readonly TrustedSessionRecord[],
+  trustedNow: Date,
+): FreeSessionDiscoveryManifest {
+  const visible = buildSessionDiscoveryManifest(sessions, trustedNow).sessionIds;
+  return {
+    sessions: sessions
+      .filter((session) => visible.includes(session.id) && session.isFree === true)
+      .map((session) => {
+        const id = validateContentId("sessionId", session.id);
+        if (typeof session.title !== "string" || !session.title.trim()) {
+          throw new Error(`Session ${id} has an invalid title.`);
+        }
+        return { id, title: session.title, order: session.order as number };
+      })
+      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id, "en")),
+  };
+}
+
+export function freeSessionDiscoveryManifestsEqual(
+  value: unknown,
+  expected: FreeSessionDiscoveryManifest,
+): boolean {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const data = value as Record<string, unknown>;
+  if (Object.keys(data).length !== 1 || !Array.isArray(data.sessions)) return false;
+  return data.sessions.length === expected.sessions.length && data.sessions.every((item, index) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return false;
+    const record = item as Record<string, unknown>;
+    const expectedItem = expected.sessions[index];
+    return Object.keys(record).length === 3 &&
+      record.id === expectedItem?.id &&
+      record.title === expectedItem.title &&
+      record.order === expectedItem.order;
+  });
 }
 
 export function sessionDiscoveryManifestsEqual(
