@@ -25,6 +25,7 @@ import {
   prepareOwnerProtectedVideo,
   validateOwnerVideoFileName,
 } from "../src/ownerConsole/videoPreparation.js";
+import { ACCESS_CODE_CLIENT_JS } from "../src/ownerConsole/accessCodeClient.js";
 
 const course = (id: string, title = "Course") => ({
   id,
@@ -327,6 +328,50 @@ test("Access Code generation endpoint preserves owner authority and exact input"
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("Owner Access Code UI uses the trusted endpoint and keeps plaintext transient", async () => {
+  const fakeDb = {
+    collection: () => ({ get: async () => ({ docs: [] }) }),
+  } as unknown as Firestore;
+  const { server } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: fakeDb,
+    ownerUid: "owner",
+    projectId: "demo-at-in-physics",
+    authorize: async () => {},
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  try {
+    const html = await (await fetch(origin)).text();
+    const script = await (await fetch(origin + "/app.js")).text();
+    assert.match(html, /<section id="accessCodes"><h2>Access Codes<\/h2>/);
+    assert.match(html, /id="accessCodeCourse"/);
+    assert.match(html, /id="accessCodeGenerate" disabled/);
+    assert.match(html, /displayed once and cannot be recovered later/i);
+    assert.match(html, /id="accessCodeCopy"/);
+    assert.match(script, /api\('\/api\/access-codes\/create'/);
+    assert.match(script, /courseId:course\.value/);
+    assert.match(script, /expiresAt:expiry\?new Date\(expiry\)\.toISOString\(\):null/);
+    assert.match(script, /accessCodeGenerate\.disabled=true/);
+    assert.match(script, /accessCodeResult\.hidden=true;accessCodePlaintext\.textContent=''/);
+    assert.match(script, /accessCodePlaintext\.textContent=d\.accessCode\.code/);
+    assert.match(script, /navigator\.clipboard\.writeText\(accessCodePlaintext\.textContent\)/);
+    assert.match(script, /Copy failed\. The Access Code remains visible/);
+    assert.doesNotMatch(ACCESS_CODE_CLIENT_JS, /localStorage|sessionStorage|console\.|location\.|URLSearchParams/);
+    assert.doesNotMatch(ACCESS_CODE_CLIENT_JS, /document ID|SHA-256|accessCodeHash/i);
+    assert.doesNotThrow(() => new Script(script));
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("Owner Access Code client contains no browser generator, persistence, or logging", () => {
+  assert.doesNotMatch(ACCESS_CODE_CLIENT_JS, /crypto|getRandomValues|Math\.random|randomBytes/);
+  assert.doesNotMatch(ACCESS_CODE_CLIENT_JS, /localStorage|sessionStorage|indexedDB|console\.|document\.cookie/);
+  assert.doesNotMatch(ACCESS_CODE_CLIENT_JS, /location\.|history\.|URLSearchParams/);
+  assert.equal((ACCESS_CODE_CLIENT_JS.match(/\/api\/access-codes\/create/g) ?? []).length, 1);
 });
 
 test("creation endpoints pass only validated minimum contracts to trusted services", async () => {
