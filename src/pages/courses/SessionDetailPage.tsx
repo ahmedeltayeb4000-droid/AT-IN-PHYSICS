@@ -18,6 +18,7 @@ import type { Enrollment } from "../../features/enrollments/types";
 import { useMyEnrollments } from "../../features/enrollments/useMyEnrollments";
 import { SessionVideoPlayer } from "../../features/video/SessionVideoPlayer";
 import type { VideoWatermarkPolicy } from "../../features/video/watermark";
+import { SessionResourceList } from "../../features/resources/SessionResourceList";
 
 function StatusPanel({
   title,
@@ -318,6 +319,11 @@ export function SessionDetailPage() {
                   </p>
                 )}
               </div>
+              <SessionResourceList
+                courseId={course.id}
+                moduleId={module.id}
+                sessionId={session.id}
+              />
             </GlassCard>
           </div>
         </PageContainer>
