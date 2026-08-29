@@ -31,7 +31,9 @@ service cloud.firestore {
     }
 
     function isOwner() {
-      return request.auth != null && request.auth.token.owner == true;
+      return request.auth != null
+        && request.auth.token.keys().hasAny(["owner"])
+        && request.auth.token.owner == true;
     }
 
     function isValidCourseId(courseId) {
@@ -260,10 +262,104 @@ service cloud.firestore {
           == resource.data.sessionIds.toSet().size();
     }
 
+    function isValidProtectedResourceFileName(value) {
+      return value is string
+        && value.size() >= 5
+        && value.size() <= 120
+        && value == value.trim()
+        && value.matches("^[A-Za-z0-9][A-Za-z0-9._ ()-]*[.]pdf$")
+        && !value.matches(".*[.][.].*")
+        && !value.matches(".*[ .][.]pdf$")
+        && !value.matches("^([Cc][Oo][Nn]|[Pp][Rr][Nn]|[Aa][Uu][Xx]|[Nn][Uu][Ll]|[Cc][Oo][Mm][1-9]|[Ll][Pp][Tt][1-9])([.].*)?[.]pdf$");
+    }
+
+    function isValidProtectedResourceMetadata(data, resourceId, route) {
+      return data.keys().hasAll([
+          "version", "resourceId", "title", "originalFileName", "mimeType",
+          "plaintextSize", "formatVersion", "ciphertextRoute",
+          "ciphertextSha256", "ciphertextSize", "createdAt", "boundAt"
+        ])
+        && data.keys().hasOnly([
+          "version", "resourceId", "title", "originalFileName", "mimeType",
+          "plaintextSize", "formatVersion", "ciphertextRoute",
+          "ciphertextSha256", "ciphertextSize", "createdAt", "boundAt"
+        ])
+        && data.version == 1
+        && isValidCourseId(resourceId)
+        && data.resourceId == resourceId
+        && isValidCourseText(data.title, 160)
+        && isValidProtectedResourceFileName(data.originalFileName)
+        && data.mimeType == "application/pdf"
+        && data.plaintextSize is int
+        && data.plaintextSize > 0
+        && data.plaintextSize <= 20971520
+        && data.formatVersion == "ATR1"
+        && data.ciphertextRoute == route
+        && data.ciphertextSha256 is string
+        && data.ciphertextSha256.matches("^[a-f0-9]{64}$")
+        && data.ciphertextSize is int
+        && data.ciphertextSize == data.plaintextSize + 32
+        && data.ciphertextSize <= 20971552
+        && data.createdAt is timestamp
+        && data.boundAt is timestamp;
+    }
+
+    function isValidProtectedResourceAccess(data, resourceId) {
+      return data.keys().hasAll([
+          "version", "resourceId", "formatVersion", "ciphertextSha256",
+          "contentKey"
+        ])
+        && data.keys().hasOnly([
+          "version", "resourceId", "formatVersion", "ciphertextSha256",
+          "contentKey"
+        ])
+        && data.version == 1
+        && data.resourceId == resourceId
+        && data.formatVersion == "ATR1"
+        && data.ciphertextSha256 is string
+        && data.ciphertextSha256.matches("^[a-f0-9]{64}$")
+        && isValidContentKey(data.contentKey);
+    }
+
+    function isPairedProtectedResource(metadata, access) {
+      return metadata.resourceId == access.resourceId
+        && metadata.formatVersion == access.formatVersion
+        && metadata.ciphertextSha256 == access.ciphertextSha256;
+    }
+
     match /courses/{courseId} {
       allow read: if resource.data.status == "published" || isOwner();
       allow create: if isOwner() && isValidCreatedCourse(courseId);
       allow update, delete: if false;
+
+      match /resources/{resourceId} {
+        allow get: if (canReadCourseContent(courseId) || isOwner())
+          && isValidProtectedResourceMetadata(
+            resource.data,
+            resourceId,
+            "/protected-resources/courses/" + courseId + "/resources/" + resourceId + ".atr1"
+          );
+        allow list: if canReadCourseContent(courseId) || isOwner();
+        allow create, update, delete: if false;
+
+        match /access/{accessId} {
+          allow get: if accessId == "primary"
+            && canReadCourseContent(courseId)
+            && !isOwner()
+            && exists(/databases/$(database)/documents/courses/$(courseId)/resources/$(resourceId))
+            && isValidProtectedResourceMetadata(
+              get(/databases/$(database)/documents/courses/$(courseId)/resources/$(resourceId)).data,
+              resourceId,
+              "/protected-resources/courses/" + courseId + "/resources/" + resourceId + ".atr1"
+            )
+            && isValidProtectedResourceAccess(resource.data, resourceId)
+            && isPairedProtectedResource(
+              get(/databases/$(database)/documents/courses/$(courseId)/resources/$(resourceId)).data,
+              resource.data
+            );
+          allow list, create, update, delete: if false;
+        }
+      }
 
       match /modules/{moduleId} {
         allow get: if canReadCourseContent(courseId) || isOwner();
@@ -286,6 +382,53 @@ service cloud.firestore {
           allow create: if isOwner()
             && isValidCreatedSession(courseId, moduleId, sessionId);
           allow update, delete: if false;
+
+          match /resources/{resourceId} {
+            allow get: if (
+                (
+                  canReadCourseContent(courseId)
+                  && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
+                  && isSessionVisible(
+                    get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data
+                  )
+                ) || isOwner()
+              )
+              && isValidProtectedResourceMetadata(
+                resource.data,
+                resourceId,
+                "/protected-resources/courses/" + courseId + "/modules/" + moduleId + "/sessions/" + sessionId + "/resources/" + resourceId + ".atr1"
+              );
+            allow list: if (
+                canReadCourseContent(courseId)
+                && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
+                && isSessionVisible(
+                  get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data
+                )
+              ) || isOwner();
+            allow create, update, delete: if false;
+
+            match /access/{accessId} {
+              allow get: if accessId == "primary"
+                && canReadCourseContent(courseId)
+                && !isOwner()
+                && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
+                && isSessionVisible(
+                  get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data
+                )
+                && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)/resources/$(resourceId))
+                && isValidProtectedResourceMetadata(
+                  get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)/resources/$(resourceId)).data,
+                  resourceId,
+                  "/protected-resources/courses/" + courseId + "/modules/" + moduleId + "/sessions/" + sessionId + "/resources/" + resourceId + ".atr1"
+                )
+                && isValidProtectedResourceAccess(resource.data, resourceId)
+                && isPairedProtectedResource(
+                  get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)/resources/$(resourceId)).data,
+                  resource.data
+                );
+              allow list, create, update, delete: if false;
+            }
+          }
 
           match /videoAccess/{accessId} {
             allow get: if accessId == "primary"
