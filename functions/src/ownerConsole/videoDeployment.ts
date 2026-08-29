@@ -204,6 +204,11 @@ export async function verifyOwnerRemoteArtifact(
       throw new Error("Remote artifact returned an unexpected redirect.");
     }
     if (!response.ok) throw new Error("Remote artifact was not available.");
+    if (response.url) {
+      const finalUrl = new URL(response.url);
+      if (finalUrl.origin !== origin.origin || finalUrl.pathname !== url.pathname)
+        throw new Error("Remote artifact final URL was unsafe.");
+    }
     const declaredLength = response.headers.get("content-length");
     if (
       declaredLength !== null &&
@@ -223,9 +228,16 @@ export async function verifyOwnerRemoteArtifact(
     const reader = response.body.getReader();
     const hash = createHash("sha256");
     let size = 0;
+    const expectedMagic = new TextEncoder().encode(
+      review.safe.hostingRoute.endsWith(".atr1") ? "ATR1" : "ATV1",
+    );
+    const observedMagic: number[] = [];
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      for (const byte of value) {
+        if (observedMagic.length < expectedMagic.length) observedMagic.push(byte);
+      }
       size += value.byteLength;
       if (size > review.safe.artifactSize) {
         await reader.cancel();
@@ -235,6 +247,8 @@ export async function verifyOwnerRemoteArtifact(
     }
     if (
       size !== review.safe.artifactSize ||
+      observedMagic.length !== expectedMagic.length ||
+      observedMagic.some((byte, index) => byte !== expectedMagic[index]) ||
       hash.digest("hex") !== review.safe.artifactSha256
     )
       throw new Error(

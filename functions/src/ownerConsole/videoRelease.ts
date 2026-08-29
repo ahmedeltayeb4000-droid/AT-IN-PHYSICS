@@ -94,7 +94,7 @@ async function importHostingModule(relativePath: string) {
   return import(pathToFileURL(join(REPOSITORY_ROOT, relativePath)).href);
 }
 
-async function buildFrontend(): Promise<void> {
+export async function buildOwnerFrontend(): Promise<void> {
   const options = {
     cwd: REPOSITORY_ROOT,
     windowsHide: true,
@@ -172,7 +172,7 @@ export async function prepareOwnerHostingRelease(
     dependencies.preparePackage ?? prepareVideoPublicationPackage;
   const before = await preparePackage(descriptorPath);
   assertPreparedIdentity(known, before);
-  await (dependencies.buildFrontend ?? buildFrontend)();
+  await (dependencies.buildFrontend ?? buildOwnerFrontend)();
   const release = await (dependencies.assembleRelease ?? assembleRelease)();
   const after = await preparePackage(descriptorPath);
   assertPreparedIdentity(known, after);

@@ -23,6 +23,7 @@
     "backend:build": "npm --prefix functions run build",
     "backend:test": "npm --prefix functions test",
     "backend:test:protected-resource-packaging": "npm --prefix functions run test:protected-resource-packaging",
+    "backend:test:resource-lifecycle": "npm --prefix functions run test:resource-lifecycle",
     "backend:test:integration": "npm run backend:build && firebase emulators:exec --project demo-at-in-physics --only auth,firestore,functions \"npm --prefix functions run test:integration\"",
     "backend:test:access-code": "npm --prefix functions run test:access-code",
     "backend:test:access-code:integration": "npm run backend:build && firebase emulators:exec --project demo-at-in-physics --only firestore \"npm --prefix functions run test:access-code:integration\"",

@@ -74,6 +74,24 @@ import {
 } from "./videoBinding.js";
 import { recoverOwnerExistingDeployment } from "./videoRecovery.js";
 import { createAccessCode, type GenerateAccessCodeResult } from "../accessCodes/accessCodes.js";
+import { PROTECTED_RESOURCE_MAX_PLAINTEXT_SIZE } from "../protectedResources/format.js";
+import { RESOURCE_CLIENT_JS } from "./resourceClient.js";
+import {
+  applyOwnerResourceBinding,
+  createOwnerResourceBindingReview,
+  createOwnerResourceDeployReview,
+  deployOwnerResource,
+  prepareOwnerResourceRelease,
+  prepareOwnerSessionResource,
+  preflightOwnerResourceRelease,
+  RESOURCE_BIND_CONFIRMATION,
+  retryOwnerResourceVerification,
+  type OwnerPreparedResource,
+  type OwnerResourceBindingReview,
+  type OwnerResourceDeployReview,
+  type OwnerResourceRelease,
+  type OwnerVerifiedResourceDeployment,
+} from "./resourceLifecycle.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -109,6 +127,14 @@ export type OwnerConsoleDependencies = Readonly<{
   applyBindingReview?: typeof applyOwnerBindingReview;
   recoverExistingDeployment?: typeof recoverOwnerExistingDeployment;
   generateAccessCode?: typeof createAccessCode;
+  prepareResource?: typeof prepareOwnerSessionResource;
+  prepareResourceRelease?: typeof prepareOwnerResourceRelease;
+  preflightResourceRelease?: typeof preflightOwnerResourceRelease;
+  createResourceDeployReview?: typeof createOwnerResourceDeployReview;
+  deployResource?: typeof deployOwnerResource;
+  retryResourceVerification?: typeof retryOwnerResourceVerification;
+  createResourceBindingReview?: typeof createOwnerResourceBindingReview;
+  applyResourceBinding?: typeof applyOwnerResourceBinding;
 }>;
 
 type Review = {
@@ -200,6 +226,22 @@ async function videoBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+async function pdfBody(req: IncomingMessage): Promise<Buffer> {
+  const declared = Number(req.headers["content-length"]);
+  if (!Number.isSafeInteger(declared) || declared <= 0 || declared > PROTECTED_RESOURCE_MAX_PLAINTEXT_SIZE)
+    throw new Error("PDF upload size is invalid.");
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const bytes = Buffer.from(chunk);
+    size += bytes.length;
+    if (size > PROTECTED_RESOURCE_MAX_PLAINTEXT_SIZE) throw new Error("PDF upload is too large.");
+    chunks.push(bytes);
+  }
+  if (size !== declared) throw new Error("PDF upload was incomplete.");
+  return Buffer.concat(chunks);
+}
+
 function exactInput(
   input: Record<string, unknown>,
   fields: readonly string[],
@@ -244,6 +286,14 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const recoverExistingDeployment =
     deps.recoverExistingDeployment ?? recoverOwnerExistingDeployment;
   const generateAccessCode = deps.generateAccessCode ?? createAccessCode;
+  const prepareResource = deps.prepareResource ?? prepareOwnerSessionResource;
+  const prepareResourceRelease = deps.prepareResourceRelease ?? prepareOwnerResourceRelease;
+  const preflightResourceRelease = deps.preflightResourceRelease ?? preflightOwnerResourceRelease;
+  const createResourceDeployReview = deps.createResourceDeployReview ?? createOwnerResourceDeployReview;
+  const deployResource = deps.deployResource ?? deployOwnerResource;
+  const retryResourceVerification = deps.retryResourceVerification ?? retryOwnerResourceVerification;
+  const createResourceBindingReview = deps.createResourceBindingReview ?? createOwnerResourceBindingReview;
+  const applyResourceBinding = deps.applyResourceBinding ?? applyOwnerResourceBinding;
   const preparedVideos = new Map<string, OwnerPreparedVideo>();
   const videoReleases = new Map<string, OwnerReleaseReview>();
   const preflightedVideoReleases = new Set<string>();
@@ -254,6 +304,13 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const deployedVideoReleases = new Map<string, OwnerDeployReview>();
   const verifiedDeployments = new Map<string, OwnerVerifiedDeployment>();
   const bindingReviews = new Map<string, { review: OwnerBindingReview; used: boolean }>();
+  const preparedResources = new Map<string, OwnerPreparedResource>();
+  const resourceReleases = new Map<string, OwnerResourceRelease>();
+  const preflightedResourceReleases = new Set<string>();
+  const resourceDeployReviews = new Map<string, { review: OwnerResourceDeployReview; used: boolean }>();
+  const deployedResourceReleases = new Map<string, OwnerResourceDeployReview>();
+  const verifiedResourceDeployments = new Map<string, OwnerVerifiedResourceDeployment>();
+  const resourceBindingReviews = new Map<string, { review: OwnerResourceBindingReview; used: boolean }>();
   const server = createServer(async (req, res) => {
     const address = server.address() as AddressInfo | null;
     const origin = `http://${OWNER_CONSOLE_HOST}:${address?.port ?? OWNER_CONSOLE_DEFAULT_PORT}`;
@@ -281,7 +338,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}`,
+          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
@@ -369,12 +426,135 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           preparedVideos.set(preparationId, { preparationId, summary });
           return send(res, 200, { preparationId, preparation: summary });
         }
+        if (url.pathname === "/api/resource/session/prepare") {
+          if (req.headers["content-type"] !== "application/pdf") return fail(res, 415);
+          const expectedQuery = ["courseId", "moduleId", "sessionId", "resourceId", "title"];
+          if ([...url.searchParams.keys()].sort().join("|") !== [...expectedQuery].sort().join("|")) return fail(res, 400);
+          await authorize(deps.auth, deps.ownerUid);
+          let originalFileName: string;
+          try {
+            originalFileName = decodeURIComponent(typeof req.headers["x-resource-file-name"] === "string" ? req.headers["x-resource-file-name"] : "");
+          } catch {
+            return fail(res, 400);
+          }
+          const preparationId = randomBytes(24).toString("base64url");
+          const prepared = await prepareResource(deps.db, {
+            courseId: validateCourseId(url.searchParams.get("courseId")),
+            moduleId: validateCourseId(url.searchParams.get("moduleId")),
+            sessionId: validateCourseId(url.searchParams.get("sessionId")),
+            resourceId: requiredString(url.searchParams.get("resourceId")),
+            title: requiredString(url.searchParams.get("title")),
+            originalFileName,
+            mimeType: "application/pdf",
+            bytes: await pdfBody(req),
+          }, preparationId);
+          preparedResources.set(preparationId, prepared);
+          return send(res, 200, { preparationId, preparation: prepared.safe });
+        }
         if (
           (req.headers["content-type"] ?? "").split(";", 1)[0] !==
           "application/json"
         )
           return fail(res, 415);
         const input = await body(req);
+        if (url.pathname === "/api/resource/session/release") {
+          exactInput(input, ["preparationId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const prepared = preparedResources.get(requiredString(input.preparationId));
+          if (!prepared) return fail(res, 409);
+          const releaseId = randomBytes(24).toString("base64url");
+          const release = await prepareResourceRelease(prepared, deps.projectId, releaseId);
+          resourceReleases.set(releaseId, release);
+          return send(res, 200, { releaseId, release: release.safe });
+        }
+        if (url.pathname === "/api/resource/session/preflight") {
+          exactInput(input, ["releaseId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const releaseId = requiredString(input.releaseId);
+          const release = resourceReleases.get(releaseId);
+          if (!release) return fail(res, 409);
+          const preflight = await preflightResourceRelease(release, deps.projectId);
+          preflightedResourceReleases.add(releaseId);
+          return send(res, 200, { preflight });
+        }
+        if (url.pathname === "/api/resource/session/deploy/review") {
+          exactInput(input, ["releaseId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const releaseId = requiredString(input.releaseId);
+          const release = resourceReleases.get(releaseId);
+          if (!release || !preflightedResourceReleases.has(releaseId)) return fail(res, 409);
+          const reviewId = randomBytes(24).toString("base64url");
+          const review = await createResourceDeployReview(release, deps.projectId, reviewId);
+          resourceDeployReviews.set(reviewId, { review, used: false });
+          return send(res, 200, { reviewId, review: review.safe });
+        }
+        if (url.pathname === "/api/resource/session/deploy/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          if (requiredString(input.confirmation) !== HOSTING_DEPLOY_CONFIRMATION) return fail(res, 400);
+          const reviewId = requiredString(input.reviewId);
+          const record = resourceDeployReviews.get(reviewId);
+          if (!record || record.used) return fail(res, 409);
+          record.used = true;
+          try {
+            const deploymentId = randomBytes(24).toString("base64url");
+            const result = await deployResource(record.review, deps.projectId, deploymentId);
+            resourceDeployReviews.delete(reviewId);
+            if (result.deployCompleted) {
+              deployedResourceReleases.set(deploymentId, record.review);
+              if (result.safe.status === "VERIFIED_DEPLOYED") verifiedResourceDeployments.set(deploymentId, { deploymentId, status: "VERIFIED_DEPLOYED", review: record.review });
+            }
+            return send(res, 200, { deployment: result.safe });
+          } catch (error) {
+            record.used = false;
+            throw error;
+          }
+        }
+        if (url.pathname === "/api/resource/session/deploy/verify") {
+          exactInput(input, ["deploymentId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const deploymentId = requiredString(input.deploymentId);
+          const review = deployedResourceReleases.get(deploymentId);
+          if (!review) return fail(res, 409);
+          const verification = await retryResourceVerification(review, deploymentId);
+          verifiedResourceDeployments.set(deploymentId, { deploymentId, status: "VERIFIED_DEPLOYED", review });
+          return send(res, 200, { deployment: verification });
+        }
+        if (url.pathname === "/api/resource/session/bind/review") {
+          exactInput(input, ["deploymentId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const deployment = verifiedResourceDeployments.get(requiredString(input.deploymentId));
+          if (!deployment) return fail(res, 409);
+          const reviewId = randomBytes(24).toString("base64url");
+          const review = await createResourceBindingReview(deps.db, deployment, deps.projectId, reviewId);
+          resourceBindingReviews.set(reviewId, { review, used: false });
+          return send(res, 200, { reviewId, review: review.safe });
+        }
+        if (url.pathname === "/api/resource/session/bind/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          if (requiredString(input.confirmation) !== RESOURCE_BIND_CONFIRMATION) return fail(res, 400);
+          const reviewId = requiredString(input.reviewId);
+          const record = resourceBindingReviews.get(reviewId);
+          if (!record || record.used) return fail(res, 409);
+          record.used = true;
+          try {
+            const result = await applyResourceBinding(deps.db, record.review, deps.projectId);
+            const deploymentId = record.review.deployment.deploymentId;
+            const releaseId = record.review.deployment.review.release.releaseId;
+            const preparationId = record.review.deployment.review.release.preparation.preparationId;
+            resourceBindingReviews.delete(reviewId);
+            verifiedResourceDeployments.delete(deploymentId);
+            deployedResourceReleases.delete(deploymentId);
+            resourceReleases.delete(releaseId);
+            preflightedResourceReleases.delete(releaseId);
+            preparedResources.delete(preparationId);
+            return send(res, 200, { result });
+          } catch (error) {
+            record.used = false;
+            throw error;
+          }
+        }
         if (url.pathname === "/api/access-codes/create") {
           exactInput(input, ["courseId", "expiresAt"]);
           await authorize(deps.auth, deps.ownerUid);
