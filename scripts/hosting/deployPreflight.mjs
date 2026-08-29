@@ -222,6 +222,7 @@ async function sha256File(path) {
 export function validateHostingQuota(entries) {
   let totalBytes = 0;
   let protectedMediaBytes = 0;
+  let protectedResourceBytes = 0;
   for (const entry of entries) {
     if (
       !Number.isSafeInteger(entry.size) ||
@@ -235,6 +236,8 @@ export function validateHostingQuota(entries) {
     totalBytes += entry.size;
     if (entry.path.startsWith("protected-media/"))
       protectedMediaBytes += entry.size;
+    if (entry.path.startsWith("protected-resources/"))
+      protectedResourceBytes += entry.size;
   }
   if (totalBytes > HOSTING_STORAGE_NO_COST_BYTES) {
     throw new Error(
@@ -246,7 +249,12 @@ export function validateHostingQuota(entries) {
       "Protected media exceeds the zero-budget Hosting storage ceiling.",
     );
   }
-  return { totalBytes, protectedMediaBytes };
+  if (protectedResourceBytes > HOSTING_STORAGE_NO_COST_BYTES) {
+    throw new Error(
+      "Protected resources exceed the zero-budget Hosting storage ceiling.",
+    );
+  }
+  return { totalBytes, protectedMediaBytes, protectedResourceBytes };
 }
 
 async function inventoryRelease(releaseRoot, relativeFiles) {
@@ -355,11 +363,27 @@ export async function runHostingDeployPreflight({
       throw new Error(`Protected media path is not canonical: ${path}`);
     }
   }
+  for (const path of releaseFiles.filter((path) =>
+    path.startsWith("protected-resources/"),
+  )) {
+    if (
+      !/^protected-resources\/courses\/[a-z0-9]+(?:-[a-z0-9]+)*\/(?:resources\/[a-z0-9]+(?:-[a-z0-9]+)*|modules\/[a-z0-9]+(?:-[a-z0-9]+)*\/sessions\/[a-z0-9]+(?:-[a-z0-9]+)*\/resources\/[a-z0-9]+(?:-[a-z0-9]+)*)\.atr1$/.test(
+        path,
+      )
+    ) {
+      throw new Error(`Protected resource path is not canonical: ${path}`);
+    }
+  }
   const files = await inventoryRelease(resolve(releaseRoot), releaseFiles);
-  const { totalBytes, protectedMediaBytes } = validateHostingQuota(files);
-  const frontendBytes = totalBytes - protectedMediaBytes;
+  const { totalBytes, protectedMediaBytes, protectedResourceBytes } =
+    validateHostingQuota(files);
+  const frontendBytes =
+    totalBytes - protectedMediaBytes - protectedResourceBytes;
   const atv1Count = files.filter((entry) =>
     entry.path.startsWith("protected-media/"),
+  ).length;
+  const atr1Count = files.filter((entry) =>
+    entry.path.startsWith("protected-resources/"),
   ).length;
   const report = {
     formatVersion: "hosting-preflight-v1",
@@ -386,7 +410,9 @@ export async function runHostingDeployPreflight({
       totalBytes,
       frontendBytes,
       protectedMediaBytes,
+      protectedResourceBytes,
       atv1Count,
+      atr1Count,
     },
     quota: {
       hostingStorageNoCostBytes: HOSTING_STORAGE_NO_COST_BYTES,

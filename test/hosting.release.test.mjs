@@ -85,6 +85,71 @@ test("only canonical ATV1 ciphertext enters protected-media", async () =>
     ]);
   }));
 
+test("canonical Course and Session ATR1 ciphertext enters protected-resources", async () =>
+  temporary(async (root) => {
+    const distRoot = await frontendFixture(root);
+    const stagingRoot = join(root, "staging");
+    const course = join(
+      stagingRoot,
+      "protected-resources/courses/mechanics/resources",
+    );
+    const session = join(
+      stagingRoot,
+      "protected-resources/courses/mechanics/modules/motion/sessions/introduction/resources",
+    );
+    const releaseRoot = join(root, "release");
+    await mkdir(course, { recursive: true });
+    await mkdir(session, { recursive: true });
+    const artifact = Buffer.concat([Buffer.from("ATR1"), Buffer.alloc(40, 9)]);
+    await writeFile(join(course, "course-notes.atr1"), artifact);
+    await writeFile(join(session, "session-notes.atr1"), artifact);
+    const result = await assembleHostingRelease({
+      distRoot,
+      stagingRoot,
+      releaseRoot,
+    });
+    assert.equal(result.resourceCount, 2);
+    assert.deepEqual(
+      await readFile(
+        join(
+          releaseRoot,
+          "protected-resources/courses/mechanics/resources/course-notes.atr1",
+        ),
+      ),
+      artifact,
+    );
+    assert.equal(
+      result.files.some((path) => path.endsWith("session-notes.atr1")),
+      true,
+    );
+  }));
+
+test("plaintext, descriptors, malformed ATR1, and noncanonical resource paths fail closed", async () =>
+  temporary(async (root) => {
+    const distRoot = await frontendFixture(root);
+    const stagingRoot = join(root, "staging");
+    const resources = join(
+      stagingRoot,
+      "protected-resources/courses/mechanics/resources",
+    );
+    const releaseRoot = join(root, "release");
+    await mkdir(resources, { recursive: true });
+    for (const [name, bytes, pattern] of [
+      ["notes.pdf", "%PDF-plaintext", /not canonical/],
+      ["notes.package.json", "{}", /not canonical/],
+      ["notes.atr1", "not ciphertext", /not an ATR1/],
+      ["Bad.atr1", Buffer.concat([Buffer.from("ATR1"), Buffer.alloc(40)]), /not canonical/],
+    ]) {
+      const path = join(resources, name);
+      await writeFile(path, bytes);
+      await assert.rejects(
+        assembleHostingRelease({ distRoot, stagingRoot, releaseRoot }),
+        pattern,
+      );
+      await rm(path);
+    }
+  }));
+
 test("descriptor, MP4, malformed ATV1, and credential material fail closed", async () =>
   temporary(async (root) => {
     const distRoot = await frontendFixture(root);

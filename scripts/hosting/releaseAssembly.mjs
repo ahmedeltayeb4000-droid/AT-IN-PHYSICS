@@ -60,6 +60,35 @@ const SECRET_MARKERS = [
 ];
 const ASSET_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
+function isCanonicalId(value) {
+  return value.length <= 128 && ASSET_ID_PATTERN.test(value);
+}
+
+function isCanonicalProtectedResourcePath(path) {
+  const parts = path.replaceAll("\\", "/").split("/");
+  if (
+    parts[0] !== "protected-resources" ||
+    parts[1] !== "courses" ||
+    !isCanonicalId(parts[2] ?? "")
+  ) {
+    return false;
+  }
+  const course =
+    parts.length === 5 && parts[3] === "resources";
+  const session =
+    parts.length === 9 &&
+    parts[3] === "modules" &&
+    isCanonicalId(parts[4] ?? "") &&
+    parts[5] === "sessions" &&
+    isCanonicalId(parts[6] ?? "") &&
+    parts[7] === "resources";
+  const fileName = parts.at(-1) ?? "";
+  const resourceId = fileName.endsWith(".atr1")
+    ? fileName.slice(0, -5)
+    : "";
+  return (course || session) && isCanonicalId(resourceId);
+}
+
 function assertContained(root, candidate) {
   const value = relative(resolve(root), resolve(candidate));
   if (!value || value === ".." || value.startsWith(`..${sep}`)) {
@@ -156,6 +185,44 @@ async function copyStagedMedia(stagingRoot, destinationRoot) {
   return count;
 }
 
+async function copyStagedResources(stagingRoot, destinationRoot) {
+  const sourceRoot = join(stagingRoot, "protected-resources");
+  if (!(await inspectRealDirectory(stagingRoot, false))) return 0;
+  if (!(await inspectRealDirectory(sourceRoot, false))) return 0;
+  let count = 0;
+  async function copy(current) {
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      const source = join(current, entry.name);
+      const rel = join("protected-resources", relative(sourceRoot, source));
+      const destination = join(destinationRoot, rel);
+      assertContained(destinationRoot, destination);
+      if (entry.isSymbolicLink()) {
+        throw new Error(`Protected resource symlink is forbidden: ${rel}`);
+      }
+      if (entry.isDirectory()) {
+        await mkdir(destination);
+        await copy(source);
+        continue;
+      }
+      if (!entry.isFile() || !isCanonicalProtectedResourcePath(rel)) {
+        throw new Error(`Protected resource path is not canonical: ${rel}`);
+      }
+      const bytes = await readFile(source);
+      if (
+        bytes.length <= 32 ||
+        bytes.subarray(0, 4).toString("ascii") !== "ATR1"
+      ) {
+        throw new Error(`Protected resource is not an ATR1 artifact: ${rel}`);
+      }
+      await copyFile(source, destination, constants.COPYFILE_EXCL);
+      count += 1;
+    }
+  }
+  await mkdir(join(destinationRoot, "protected-resources"));
+  await copy(sourceRoot);
+  return count;
+}
+
 export async function auditHostingRelease(releaseRoot) {
   await inspectRealDirectory(releaseRoot, true);
   const files = [];
@@ -175,7 +242,18 @@ export async function auditHostingRelease(releaseRoot) {
       if (rel.startsWith("protected-media/") && !rel.endsWith(".atv1")) {
         throw new Error(`Protected media output is not ATV1: ${rel}`);
       }
-      if (!rel.startsWith("protected-media/")) {
+      if (rel.startsWith("protected-resources/")) {
+        if (!isCanonicalProtectedResourcePath(rel)) {
+          throw new Error(`Protected resource path is not canonical: ${rel}`);
+        }
+        const bytes = await readFile(path);
+        if (
+          bytes.length <= 32 ||
+          bytes.subarray(0, 4).toString("ascii") !== "ATR1"
+        ) {
+          throw new Error(`Protected resource output is not ATR1: ${rel}`);
+        }
+      } else if (!rel.startsWith("protected-media/")) {
         const content = await readFile(path, "utf8");
         if (SECRET_MARKERS.some((marker) => content.includes(marker))) {
           throw new Error(`Credential material detected in release: ${rel}`);
@@ -205,12 +283,16 @@ export async function assembleHostingRelease({
   try {
     await copyFrontendTree(resolve(distRoot), temporary);
     const mediaCount = await copyStagedMedia(resolve(stagingRoot), temporary);
+    const resourceCount = await copyStagedResources(
+      resolve(stagingRoot),
+      temporary,
+    );
     const files = await auditHostingRelease(temporary);
     if (await inspectRealDirectory(release, false)) {
       await rm(release, { recursive: true });
     }
     await rename(temporary, release);
-    return { releaseRoot: release, files, mediaCount };
+    return { releaseRoot: release, files, mediaCount, resourceCount };
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
     throw error;

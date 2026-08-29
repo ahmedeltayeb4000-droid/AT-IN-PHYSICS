@@ -44,11 +44,29 @@ test("Hosting serves ATV1 as binary with conservative caching", async () => {
   assert.equal(bytes.subarray(0, 4).toString("ascii"), "ATV1");
 });
 
+test("Hosting serves ATR1 as same-origin binary with conservative caching", async () => {
+  const response = await fetch(
+    `${ORIGIN}/protected-resources/courses/mechanics/resources/emulator-notes.atr1`,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("content-type"), "application/octet-stream");
+  assert.equal(
+    response.headers.get("cache-control"),
+    "public, max-age=3600, must-revalidate, no-transform",
+  );
+  assert.equal(response.headers.get("content-disposition"), null);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  assert.equal(bytes.subarray(0, 4).toString("ascii"), "ATR1");
+});
+
 test("missing media, descriptors, and MP4 files return 404 instead of the SPA", async () => {
   for (const path of [
     "/protected-media/missing.atv1",
     "/protected-media/emulator-fixture.publication.json",
     "/protected-media/plaintext.mp4",
+    "/protected-resources/courses/mechanics/resources/missing.atr1",
+    "/protected-resources/courses/mechanics/resources/plaintext.pdf",
+    "/protected-resources/courses/mechanics/resources/notes.package.json",
   ]) {
     const response = await fetch(`${ORIGIN}${path}`);
     assert.equal(response.status, 404);

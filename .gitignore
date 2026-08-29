@@ -15,9 +15,11 @@ functions/node_modules
 .firebase
 *.local
 /video-packages/
+/protected-resource-packages/
 /hosting-video-staging/
 /hosting-release/
 /hosting-release.tmp-*/
+/hosting-emulator-config/
 /hosting-deploy-preflight/
 /hosting-deploy-preflight.tmp-*/
 /test-results/

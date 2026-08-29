@@ -40,11 +40,24 @@
             "value": "public, max-age=3600, must-revalidate, no-transform"
           }
         ]
+      },
+      {
+        "regex": ".*\\.atr1",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/octet-stream"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600, must-revalidate, no-transform"
+          }
+        ]
       }
     ],
     "rewrites": [
       {
-        "source": "!/@(protected-media)/**",
+        "source": "!/@(protected-media|protected-resources)/**",
         "destination": "/index.html"
       }
     ]
