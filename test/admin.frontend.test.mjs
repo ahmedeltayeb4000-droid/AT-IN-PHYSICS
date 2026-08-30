@@ -61,6 +61,8 @@ test("only a verified owner is allowed", () => {
 
 test("AuthProvider derives owner authority only from ID-token claims", async () => {
   const provider = await source("../src/features/auth/AuthProvider.tsx");
+  assert.match(provider, /onIdTokenChanged\s*\(/);
+  assert.doesNotMatch(provider, /onAuthStateChanged/);
   assert.match(provider, /getIdTokenResult\s*\(/);
   assert.match(provider, /token\.claims\.owner\s*===\s*true/);
   assert.doesNotMatch(
@@ -113,7 +115,53 @@ test("owner Courses page uses the dedicated inventory repository and renders bot
   assert.match(page, /No Courses/);
   assert.match(page, /Unable to load Courses/);
   assert.match(page, /Loading Courses/);
+  assert.match(page, /Course inventory data does not match the trusted schema/);
+  assert.match(page, /not authorized to read the owner Course inventory/);
+  assert.match(page, /temporarily unavailable/);
   assert.doesNotMatch(page, /error\.message|FirebaseError|\.stack\b/);
+});
+
+test("admin Course inventory classifies failures without exposing underlying errors", async () => {
+  const {
+    AdminCourseInventoryError,
+    classifyAdminCourseInventoryFailure,
+  } = await import(
+    "../src/features/admin/adminCourseInventoryDiagnostics.ts"
+  );
+  assert.equal(
+    classifyAdminCourseInventoryFailure({ code: "firestore/unauthenticated" }),
+    "unauthenticated",
+  );
+  assert.equal(
+    classifyAdminCourseInventoryFailure({ code: "permission-denied" }),
+    "unauthorized",
+  );
+  assert.equal(
+    classifyAdminCourseInventoryFailure({ code: "firestore/unavailable" }),
+    "unavailable",
+  );
+  assert.equal(
+    classifyAdminCourseInventoryFailure({ code: "deadline-exceeded" }),
+    "unavailable",
+  );
+  assert.equal(
+    classifyAdminCourseInventoryFailure({ code: "auth/network-request-failed" }),
+    "unavailable",
+  );
+  assert.equal(
+    classifyAdminCourseInventoryFailure({ code: "auth/user-token-expired" }),
+    "unauthenticated",
+  );
+  assert.equal(
+    classifyAdminCourseInventoryFailure(new Error("token SECRET stack")),
+    "unknown",
+  );
+  assert.equal(
+    classifyAdminCourseInventoryFailure(
+      new AdminCourseInventoryError("malformed"),
+    ),
+    "malformed",
+  );
 });
 
 test("student Course repository remains published-only and admin inventory is isolated", async () => {

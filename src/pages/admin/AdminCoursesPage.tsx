@@ -9,7 +9,10 @@ import {
   createAdminCourse,
 } from "../../features/admin/adminCourseCreation";
 import { buildAdminCourseDraft } from "../../features/admin/adminCourseCreationValidation";
-import { getAdminCourses } from "../../features/admin/adminCourseRepository";
+import {
+  AdminCourseInventoryError,
+  getAdminCourses,
+} from "../../features/admin/adminCourseRepository";
 import {
   AdminModuleCreationError,
   createAdminModule,
@@ -597,7 +600,15 @@ export function AdminCoursesPage() {
         <GlassCard className="mt-8 p-6 text-center" role="alert">
           <h3 className="font-bold text-text">Unable to load Courses</h3>
           <p className="mt-2 text-sm text-text-muted">
-            Please try again later.
+            {courses.error instanceof AdminCourseInventoryError
+              ? {
+                  unauthenticated: "Sign in again to refresh owner authorization.",
+                  unauthorized: "The current account is not authorized to read the owner Course inventory.",
+                  unavailable: "The Course inventory service is temporarily unavailable.",
+                  malformed: "Course inventory data does not match the trusted schema.",
+                  unknown: "The Course inventory failed for an unknown reason.",
+                }[courses.error.code]
+              : "The Course inventory failed for an unknown reason."}
           </p>
         </GlassCard>
       ) : courses.data.length === 0 ? (

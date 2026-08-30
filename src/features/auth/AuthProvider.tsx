@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { onAuthStateChanged, type User } from "firebase/auth";
+import { onIdTokenChanged, type User } from "firebase/auth";
 import { firebaseAuth } from "../../lib/firebase";
 import { AuthContext } from "./AuthContext";
 
@@ -12,7 +12,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true;
     let revision = 0;
-    const unsubscribe = onAuthStateChanged(
+    const unsubscribe = onIdTokenChanged(
       firebaseAuth,
       async (nextUser) => {
         const currentRevision = ++revision;
