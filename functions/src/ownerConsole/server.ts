@@ -99,6 +99,14 @@ import {
   FREE_STATUS_PUBLISHED_CONFIRMATION,
   type SessionFreeStatusReview,
 } from "./sessionFreeStatus.js";
+import {
+  applyCoursePublication,
+  COURSE_PUBLICATION_CONFIRMATION,
+  reviewCoursePublication,
+  safeCoursePublicationReview,
+  type CoursePublicationReview,
+} from "./coursePublication.js";
+import { COURSE_PUBLICATION_CLIENT_JS } from "./coursePublicationClient.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -144,6 +152,8 @@ export type OwnerConsoleDependencies = Readonly<{
   applyResourceBinding?: typeof applyOwnerResourceBinding;
   reviewFreeStatus?: typeof reviewSessionFreeStatus;
   applyFreeStatus?: typeof applySessionFreeStatus;
+  reviewCoursePublication?: typeof reviewCoursePublication;
+  applyCoursePublication?: typeof applyCoursePublication;
 }>;
 
 type Review = {
@@ -305,7 +315,13 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const applyResourceBinding = deps.applyResourceBinding ?? applyOwnerResourceBinding;
   const reviewFreeStatus = deps.reviewFreeStatus ?? reviewSessionFreeStatus;
   const applyFreeStatus = deps.applyFreeStatus ?? applySessionFreeStatus;
+  const reviewCourse = deps.reviewCoursePublication ?? reviewCoursePublication;
+  const applyCourse = deps.applyCoursePublication ?? applyCoursePublication;
   const freeStatusReviews = new Map<string, { review: SessionFreeStatusReview; used: boolean }>();
+  const coursePublicationReviews = new Map<
+    string,
+    { review: CoursePublicationReview; used: boolean }
+  >();
   const preparedVideos = new Map<string, OwnerPreparedVideo>();
   const videoReleases = new Map<string, OwnerReleaseReview>();
   const preflightedVideoReleases = new Set<string>();
@@ -350,7 +366,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}`,
+          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
@@ -843,6 +859,35 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
             },
           });
         }
+        if (url.pathname === "/api/courses/publication/review") {
+          exactInput(input, ["courseId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const review = await reviewCourse(deps.db, input.courseId);
+          const reviewId = randomBytes(24).toString("base64url");
+          coursePublicationReviews.set(reviewId, { review, used: false });
+          return send(res, 200, {
+            reviewId,
+            review: safeCoursePublicationReview(review),
+          });
+        }
+        if (url.pathname === "/api/courses/publication/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const reviewId = requiredString(input.reviewId);
+          const record = coursePublicationReviews.get(reviewId);
+          if (!record || record.used) return fail(res, 409);
+          if (input.confirmation !== COURSE_PUBLICATION_CONFIRMATION)
+            return fail(res, 400);
+          record.used = true;
+          try {
+            const result = await applyCourse(deps.db, record.review);
+            coursePublicationReviews.delete(reviewId);
+            return send(res, 200, { result });
+          } catch (error) {
+            record.used = false;
+            throw error;
+          }
+        }
         if (url.pathname === "/api/courses/create") {
           exactInput(input, ["courseId", "title", "shortDescription"]);
           await authorize(deps.auth, deps.ownerUid);
@@ -998,4 +1043,4 @@ function escapeHtml(value: string) {
   );
 }
 
-const CLIENT_JS = `let csrf,reviewId;const q=s=>document.querySelector(s),msg=q('#message'),course=q('#course'),module=q('#module'),sessions=q('#sessions'),dialog=q('#review'),courseForm=q('#courseForm'),moduleForm=q('#moduleForm'),sessionForm=q('#sessionForm');async function api(path,options={}){msg.textContent='Loading…';const r=await fetch(path,{...options,headers:{'content-type':'application/json',...(options.method==='POST'?{'x-owner-control-csrf':csrf}:{}),...options.headers}});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed.');msg.textContent='';return d}function opt(x){const o=document.createElement('option');o.value=x.id;o.textContent=x.title+' ('+x.id+')';return o}async function loadCourses(selected=course.value){const d=await api('/api/courses');course.length=1;d.courses.forEach(x=>course.append(opt(x)));course.value=selected;if(selected)await loadModules()}async function loadModules(selected=module.value){module.length=1;sessions.innerHTML='<li>Select a Module.</li>';moduleForm.querySelector('button').disabled=!course.value;sessionForm.querySelector('button').disabled=true;if(!course.value){module.disabled=true;return}const d=await api('/api/modules?courseId='+encodeURIComponent(course.value));d.modules.forEach(x=>module.append(opt(x)));module.disabled=false;module.value=selected;sessionForm.querySelector('button').disabled=!module.value;if(module.value)await loadSessions()}course.onchange=()=>loadModules().catch(showError);module.onchange=()=>{sessionForm.querySelector('button').disabled=!module.value;loadSessions().catch(showError)};async function loadSessions(){if(!module.value)return;const d=await api('/api/sessions?courseId='+encodeURIComponent(course.value)+'&moduleId='+encodeURIComponent(module.value));sessions.innerHTML='';d.sessions.forEach(x=>{const li=document.createElement('li');li.textContent=x.order+' · '+x.title+' · '+x.release+' · lesson '+(x.hasLesson?'yes':'no')+' · video '+(x.hasVideo?'yes':'no');const badge=document.createElement('span');badge.className='badge '+x.publicationStatus;badge.textContent=x.publicationStatus;li.append(badge);if(x.publicationStatus==='draft'){const b=document.createElement('button');b.className='push';b.textContent='Publish Session';b.onclick=()=>review(x);li.append(b)}sessions.append(li)});if(!d.sessions.length)sessions.innerHTML='<li>No Sessions.</li>'}function formData(form){return Object.fromEntries(new FormData(form))}function showError(e){msg.textContent=e instanceof Error?e.message:'Owner Control could not complete the request.'}async function submit(form,path,payload,success,refresh){const button=form.querySelector('button');button.disabled=true;try{await api(path,{method:'POST',body:JSON.stringify(payload)});form.reset();await refresh();msg.textContent=success}catch(e){showError(e)}finally{button.disabled=false}}courseForm.onsubmit=e=>{e.preventDefault();const x=formData(courseForm);submit(courseForm,'/api/courses/create',x,'Course created as Draft.',()=>loadCourses(x.courseId))};moduleForm.onsubmit=e=>{e.preventDefault();const x=formData(moduleForm);submit(moduleForm,'/api/modules/create',{courseId:course.value,...x},'Module created.',()=>loadModules(x.moduleId))};sessionForm.onsubmit=e=>{e.preventDefault();const x=formData(sessionForm);submit(sessionForm,'/api/sessions/create',{courseId:course.value,moduleId:module.value,...x},'Session created as Draft.',loadSessions)};async function review(x){try{const d=await api('/api/publication/review',{method:'POST',body:JSON.stringify({courseId:course.value,moduleId:module.value,sessionId:x.id})});reviewId=d.reviewId;const r=d.review;q('#reviewBody').textContent='Session: '+x.title+' | '+r.currentPublicationState+' → '+r.proposedPublicationState+' | '+r.releaseState.toLowerCase()+' | discovery '+(r.discoveryChangeRequired?'will change':'already current')+' | video '+(r.contentReadiness.includes('VIDEO')?'present':'absent');dialog.showModal()}catch(e){showError(e)}}q('#cancel').onclick=()=>dialog.close();q('#confirm').onclick=async e=>{e.target.disabled=true;try{await api('/api/publication/apply',{method:'POST',body:JSON.stringify({reviewId})});dialog.close();await loadSessions();msg.textContent='Session publication succeeded and was verified.'}catch(x){showError(x);dialog.close()}finally{e.target.disabled=false}};(async()=>{const b=await api('/api/bootstrap');csrf=b.csrf;await loadCourses()})().catch(showError);`;
+const CLIENT_JS = `let csrf,reviewId;const q=s=>document.querySelector(s),msg=q('#message'),course=q('#course'),module=q('#module'),sessions=q('#sessions'),dialog=q('#review'),courseForm=q('#courseForm'),moduleForm=q('#moduleForm'),sessionForm=q('#sessionForm');async function api(path,options={}){msg.textContent='Loading…';const r=await fetch(path,{...options,headers:{'content-type':'application/json',...(options.method==='POST'?{'x-owner-control-csrf':csrf}:{}),...options.headers}});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed.');msg.textContent='';return d}function opt(x){const o=document.createElement('option');o.value=x.id;o.textContent=x.title+' ('+x.id+')';if(x.status)o.dataset.status=x.status;return o}async function loadCourses(selected=course.value){const d=await api('/api/courses');course.length=1;d.courses.forEach(x=>course.append(opt(x)));course.value=selected;if(selected)await loadModules()}async function loadModules(selected=module.value){module.length=1;sessions.innerHTML='<li>Select a Module.</li>';moduleForm.querySelector('button').disabled=!course.value;sessionForm.querySelector('button').disabled=true;if(!course.value){module.disabled=true;return}const d=await api('/api/modules?courseId='+encodeURIComponent(course.value));d.modules.forEach(x=>module.append(opt(x)));module.disabled=false;module.value=selected;sessionForm.querySelector('button').disabled=!module.value;if(module.value)await loadSessions()}course.onchange=()=>loadModules().catch(showError);module.onchange=()=>{sessionForm.querySelector('button').disabled=!module.value;loadSessions().catch(showError)};async function loadSessions(){if(!module.value)return;const d=await api('/api/sessions?courseId='+encodeURIComponent(course.value)+'&moduleId='+encodeURIComponent(module.value));sessions.innerHTML='';d.sessions.forEach(x=>{const li=document.createElement('li');li.textContent=x.order+' · '+x.title+' · '+x.release+' · lesson '+(x.hasLesson?'yes':'no')+' · video '+(x.hasVideo?'yes':'no');const badge=document.createElement('span');badge.className='badge '+x.publicationStatus;badge.textContent=x.publicationStatus;li.append(badge);if(x.publicationStatus==='draft'){const b=document.createElement('button');b.className='push';b.textContent='Publish Session';b.onclick=()=>review(x);li.append(b)}sessions.append(li)});if(!d.sessions.length)sessions.innerHTML='<li>No Sessions.</li>'}function formData(form){return Object.fromEntries(new FormData(form))}function showError(e){msg.textContent=e instanceof Error?e.message:'Owner Control could not complete the request.'}async function submit(form,path,payload,success,refresh){const button=form.querySelector('button');button.disabled=true;try{await api(path,{method:'POST',body:JSON.stringify(payload)});form.reset();await refresh();msg.textContent=success}catch(e){showError(e)}finally{button.disabled=false}}courseForm.onsubmit=e=>{e.preventDefault();const x=formData(courseForm);submit(courseForm,'/api/courses/create',x,'Course created as Draft.',()=>loadCourses(x.courseId))};moduleForm.onsubmit=e=>{e.preventDefault();const x=formData(moduleForm);submit(moduleForm,'/api/modules/create',{courseId:course.value,...x},'Module created.',()=>loadModules(x.moduleId))};sessionForm.onsubmit=e=>{e.preventDefault();const x=formData(sessionForm);submit(sessionForm,'/api/sessions/create',{courseId:course.value,moduleId:module.value,...x},'Session created as Draft.',loadSessions)};async function review(x){try{const d=await api('/api/publication/review',{method:'POST',body:JSON.stringify({courseId:course.value,moduleId:module.value,sessionId:x.id})});reviewId=d.reviewId;const r=d.review;q('#reviewBody').textContent='Session: '+x.title+' | '+r.currentPublicationState+' → '+r.proposedPublicationState+' | '+r.releaseState.toLowerCase()+' | discovery '+(r.discoveryChangeRequired?'will change':'already current')+' | video '+(r.contentReadiness.includes('VIDEO')?'present':'absent');dialog.showModal()}catch(e){showError(e)}}q('#cancel').onclick=()=>dialog.close();q('#confirm').onclick=async e=>{e.target.disabled=true;try{await api('/api/publication/apply',{method:'POST',body:JSON.stringify({reviewId})});dialog.close();await loadSessions();msg.textContent='Session publication succeeded and was verified.'}catch(x){showError(x);dialog.close()}finally{e.target.disabled=false}};(async()=>{const b=await api('/api/bootstrap');csrf=b.csrf;await loadCourses()})().catch(showError);`;

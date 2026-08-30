@@ -26,6 +26,7 @@ import {
   validateOwnerVideoFileName,
 } from "../src/ownerConsole/videoPreparation.js";
 import { ACCESS_CODE_CLIENT_JS } from "../src/ownerConsole/accessCodeClient.js";
+import type { CoursePublicationReview } from "../src/ownerConsole/coursePublication.js";
 
 const course = (id: string, title = "Course") => ({
   id,
@@ -221,6 +222,78 @@ test("server is loopback-only and enforces Host, Origin, CSRF, one-time review, 
     assert.equal(mutationCalls, 1);
     assert.equal(authorizeCalls, 3);
     assert.equal(publishCalls, 3);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("trusted Course publication requires confirmation, preserves failed review, and prevents replay", async () => {
+  let authorized = 0;
+  let reviewCalls = 0;
+  let applyCalls = 0;
+  let failApply = false;
+  const trustedReview: CoursePublicationReview = {
+    courseId: "course",
+    coursePath: "courses/course",
+    course: {
+      slug: "course",
+      title: "Course",
+      shortDescription: "Description",
+      status: "draft",
+    },
+    revisionMillis: 123,
+  };
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: { collection: () => ({ get: async () => ({ docs: [] }) }) } as unknown as Firestore,
+    ownerUid: "owner",
+    projectId: "demo-at-in-physics",
+    authorize: async () => { authorized += 1; },
+    reviewCoursePublication: async () => { reviewCalls += 1; return trustedReview; },
+    applyCoursePublication: async () => {
+      applyCalls += 1;
+      if (failApply) throw new Error("SECRET COURSE PUBLICATION DETAIL");
+      return { courseId: "course", title: "Course", status: "published", verified: true };
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const post = (path: string, value: unknown, headers: Record<string, string> = {}) =>
+    fetch(origin + path, {
+      method: "POST",
+      headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests, ...headers },
+      body: JSON.stringify(value),
+    });
+  try {
+    assert.equal((await post("/api/courses/publication/review", { courseId: "course", extra: true })).status, 400);
+    assert.equal(reviewCalls, 0);
+    const response = await post("/api/courses/publication/review", { courseId: "course" });
+    assert.equal(response.status, 200);
+    const reviewed = await response.json() as { reviewId: string; review: unknown };
+    const serialized = JSON.stringify(reviewed);
+    assert.equal(serialized.includes("revisionMillis"), false);
+    assert.equal(serialized.includes("shortDescription"), false);
+    assert.equal(serialized.includes("owner"), false);
+    assert.equal((await post("/api/courses/publication/apply", { reviewId: reviewed.reviewId, confirmation: "wrong" })).status, 400);
+    assert.equal(applyCalls, 0);
+    assert.equal((await post("/api/courses/publication/apply", { reviewId: reviewed.reviewId, confirmation: "PUBLISH COURSE" })).status, 200);
+    assert.equal(applyCalls, 1);
+    assert.equal((await post("/api/courses/publication/apply", { reviewId: reviewed.reviewId, confirmation: "PUBLISH COURSE" })).status, 409);
+    assert.equal(applyCalls, 1);
+    failApply = true;
+    const failedReview = await (await post("/api/courses/publication/review", { courseId: "course" })).json() as { reviewId: string };
+    const failedApply = await post("/api/courses/publication/apply", { reviewId: failedReview.reviewId, confirmation: "PUBLISH COURSE" });
+    assert.equal(failedApply.status, 400);
+    const failedBody = await failedApply.text();
+    assert.equal(failedBody.includes("SECRET COURSE PUBLICATION DETAIL"), false);
+    assert.match(failedBody, /Owner Control could not complete the request/);
+    assert.equal((await post("/api/courses/publication/review", { courseId: "course" }, { origin: "http://example.test" })).status, 403);
+    assert.equal((await post("/api/courses/publication/review", { courseId: "course" }, { "x-owner-control-csrf": "wrong" })).status, 403);
+    const script = await (await fetch(origin + "/app.js")).text();
+    assert.doesNotThrow(() => new Script(script));
+    assert.match(script, /Review Course Publication/);
+    assert.match(script, /status!==['"]draft['"]/);
+    assert.equal(authorized, 6);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

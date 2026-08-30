@@ -8,6 +8,11 @@ import {
   runCourseCreationService,
   type CourseCreationOptions,
 } from "../src/tooling/courseCreation.js";
+import {
+  applyCoursePublication,
+  reviewCoursePublication,
+  safeCoursePublicationReview,
+} from "../src/ownerConsole/coursePublication.js";
 
 const PROJECT_ID = "demo-at-in-physics";
 const app = initializeApp(
@@ -152,4 +157,114 @@ test("creation is isolated from other Courses", async () => {
     (await other.get()).updateTime?.isEqual(before.updateTime!),
     true,
   );
+});
+
+test("Course publication review is zero-write and apply changes only status", async () => {
+  const courseId = "publication-course";
+  const courseRef = db.doc(`courses/${courseId}`);
+  const courseData = {
+    slug: courseId,
+    title: "Publication Course",
+    shortDescription: "Publication description.",
+    status: "draft",
+  };
+  await courseRef.set(courseData);
+  const isolated = [
+    courseRef.collection("modules").doc("module"),
+    courseRef.collection("modules").doc("module").collection("sessions").doc("session"),
+    courseRef.collection("modules").doc("module").collection("sessionDiscovery").doc("enrolled"),
+    courseRef.collection("modules").doc("module").collection("sessionDiscovery").doc("free"),
+    db.doc("enrollments/publication-student"),
+    db.doc("accessCodes/publication-code"),
+    courseRef.collection("resources").doc("resource"),
+    courseRef.collection("resources").doc("resource").collection("access").doc("primary"),
+    courseRef.collection("modules").doc("module").collection("sessions").doc("session").collection("videoAccess").doc("primary"),
+    db.doc("courses/publication-other"),
+  ];
+  await Promise.all(isolated.map((ref, index) => ref.set({ preserved: index })));
+  const courseBefore = await courseRef.get();
+  const isolatedBefore = await db.getAll(...isolated);
+
+  const review = await reviewCoursePublication(db, courseId);
+  assert.deepEqual(safeCoursePublicationReview(review), {
+    courseId,
+    title: "Publication Course",
+    currentStatus: "draft",
+    proposedStatus: "published",
+    confirmationPhrase: "PUBLISH COURSE",
+  });
+  assert.equal((await courseRef.get()).updateTime?.isEqual(courseBefore.updateTime!), true);
+  const afterReview = await db.getAll(...isolated);
+  afterReview.forEach((snapshot, index) => {
+    assert.equal(snapshot.updateTime?.isEqual(isolatedBefore[index]!.updateTime!), true);
+  });
+
+  const result = await applyCoursePublication(db, review);
+  assert.deepEqual(result, {
+    courseId,
+    title: "Publication Course",
+    status: "published",
+    verified: true,
+  });
+  assert.deepEqual((await courseRef.get()).data(), { ...courseData, status: "published" });
+  const isolatedAfter = await db.getAll(...isolated);
+  isolatedAfter.forEach((snapshot, index) => {
+    assert.deepEqual(snapshot.data(), isolatedBefore[index]!.data());
+    assert.equal(snapshot.updateTime?.isEqual(isolatedBefore[index]!.updateTime!), true);
+  });
+});
+
+test("Course publication fails closed for stale, missing, malformed, and published state", async () => {
+  const staleRef = db.doc("courses/publication-stale");
+  await staleRef.set({
+    slug: "publication-stale",
+    title: "Before",
+    shortDescription: "Description.",
+    status: "draft",
+  });
+  const staleReview = await reviewCoursePublication(db, "publication-stale");
+  await staleRef.update({ title: "After" });
+  await assert.rejects(applyCoursePublication(db, staleReview), /changed after publication review/);
+  assert.equal((await staleRef.get()).data()?.status, "draft");
+
+  const exactRef = db.doc("courses/publication-exact-state");
+  await exactRef.set({
+    slug: "publication-exact-state",
+    title: "Exact",
+    shortDescription: "Description.",
+    status: "draft",
+  });
+  const exactReview = await reviewCoursePublication(db, "publication-exact-state");
+  await assert.rejects(
+    applyCoursePublication(db, {
+      ...exactReview,
+      course: { ...exactReview.course, title: "Different reviewed state" },
+    }),
+    /changed after publication review/,
+  );
+  assert.equal((await exactRef.get()).data()?.status, "draft");
+
+  await assert.rejects(reviewCoursePublication(db, "publication-missing"), /not found/);
+  await db.doc("courses/publication-malformed").set({
+    slug: "publication-malformed",
+    title: "Malformed",
+    shortDescription: "Description.",
+    status: "draft",
+    extra: true,
+  });
+  await assert.rejects(reviewCoursePublication(db, "publication-malformed"), /malformed/);
+  await db.doc("courses/publication-invalid").set({
+    slug: "publication-invalid",
+    title: "Invalid",
+    shortDescription: "Description.",
+    status: "hidden",
+  });
+  await assert.rejects(reviewCoursePublication(db, "publication-invalid"), /malformed/);
+  await db.doc("courses/publication-published").set({
+    slug: "publication-published",
+    title: "Published",
+    shortDescription: "Description.",
+    status: "published",
+  });
+  await assert.rejects(reviewCoursePublication(db, "publication-published"), /not eligible/);
 });
