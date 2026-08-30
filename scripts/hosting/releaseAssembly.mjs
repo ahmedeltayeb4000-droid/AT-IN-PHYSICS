@@ -64,6 +64,10 @@ function isCanonicalId(value) {
   return value.length <= 128 && ASSET_ID_PATTERN.test(value);
 }
 
+export function isCanonicalVideoAssetId(value) {
+  return typeof value === "string" && isCanonicalId(value);
+}
+
 function isCanonicalProtectedResourcePath(path) {
   const parts = path.replaceAll("\\", "/").split("/");
   if (
@@ -166,7 +170,7 @@ async function copyStagedMedia(stagingRoot, destinationRoot) {
       throw new Error(`Unexpected protected-media file: ${entry.name}`);
     }
     const assetId = entry.name.slice(0, -5);
-    if (!ASSET_ID_PATTERN.test(assetId)) {
+    if (!isCanonicalVideoAssetId(assetId)) {
       throw new Error(`Noncanonical staged video asset ID: ${entry.name}`);
     }
     const source = join(sourceDirectory, entry.name);
