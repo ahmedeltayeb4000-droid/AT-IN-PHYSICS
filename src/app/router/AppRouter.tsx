@@ -29,11 +29,7 @@ export function AppRouter() {
           <Route path="courses/:slug" element={<CourseDetailPage />} />
           <Route
             path="courses/:slug/modules/:moduleId/sessions/:sessionId"
-            element={
-              <AuthGuard>
-                <SessionDetailPage />
-              </AuthGuard>
-            }
+            element={<SessionDetailPage />}
           />
           <Route path="auth" element={<Navigate to="/login" replace />} />
           <Route

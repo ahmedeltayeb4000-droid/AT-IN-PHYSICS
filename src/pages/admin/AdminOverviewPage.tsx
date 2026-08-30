@@ -14,8 +14,9 @@ export function AdminOverviewPage() {
         Overview
       </h2>
       <p className="mt-2 max-w-2xl text-text-muted">
-        Monitor the currently readable course catalog. Administrative mutations
-        remain available only through trusted backend tooling.
+        Use this browser workspace for owner-authorized Course setup and
+        inventory. Sensitive publishing and protected-content operations remain
+        isolated in Trusted Owner Control on this computer.
       </p>
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
         <GlassCard className="p-6">
@@ -44,6 +45,24 @@ export function AdminOverviewPage() {
           >
             Open Courses
           </Link>
+        </GlassCard>
+        <GlassCard className="flex flex-col justify-between p-6">
+          <div>
+            <h3 className="font-bold text-text">Trusted Owner Control</h3>
+            <p className="mt-2 text-sm text-text-muted">
+              For protected videos and PDFs, Access Codes, review/apply,
+              publication, and binding, run START-OWNER-CONTROL.cmd on the
+              trusted owner computer, then open the loopback-only console.
+            </p>
+          </div>
+          <a
+            href="http://127.0.0.1:4317"
+            target="_blank"
+            rel="noreferrer"
+            className="mt-5 inline-flex self-start rounded-lg border border-accent px-4 py-2 text-sm font-bold text-accent"
+          >
+            Open Trusted Owner Control
+          </a>
         </GlassCard>
       </div>
     </section>

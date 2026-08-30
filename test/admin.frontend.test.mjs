@@ -93,6 +93,18 @@ test("admin shell exposes only Overview and Courses navigation", async () => {
   assert.match(layout, /md:grid-cols/);
 });
 
+test("Master Control Room explains and preserves the trusted loopback boundary", async () => {
+  const overview = await source("../src/pages/admin/AdminOverviewPage.tsx");
+  assert.match(overview, /Trusted Owner Control/);
+  assert.match(overview, /START-OWNER-CONTROL\.cmd/);
+  assert.match(overview, /http:\/\/127\.0\.0\.1:4317/);
+  assert.match(overview, /protected videos and PDFs/);
+  assert.doesNotMatch(
+    overview,
+    /ownerUid|contentKey|firebase-admin|serviceAccount|private_key/,
+  );
+});
+
 test("owner Courses page uses the dedicated inventory repository and renders both statuses", async () => {
   const page = await source("../src/pages/admin/AdminCoursesPage.tsx");
   assert.match(page, /queryFn:\s*getAdminCourses/);

@@ -8,7 +8,6 @@ import { useAuth } from "../../features/auth/AuthContext";
 import {
   getCourseBySlug,
   getCourseCurriculum,
-  getPublicFreeSessions,
 } from "../../features/courses/courseRepository";
 import { buildSessionDetailPath } from "../../features/courses/sessionDetail";
 import { hasCourseEntitlement } from "../../features/enrollments/entitlement";
@@ -45,11 +44,6 @@ export function CourseDetailPage() {
     queryKey: ["courses", course?.id ?? null, "curriculum"],
     queryFn: () => getCourseCurriculum(course!.id),
     enabled: entitled,
-  });
-  const freeSessionsQuery = useQuery({
-    queryKey: ["courses", course?.id ?? null, "free-sessions"],
-    queryFn: () => getPublicFreeSessions(course!),
-    enabled: Boolean(course),
   });
 
   if (slug && isPending) {
@@ -135,32 +129,6 @@ export function CourseDetailPage() {
             </p>
 
             <GlassCard className="mt-10 p-7 sm:p-8">
-              <h2 className="text-2xl font-bold text-text">Free sessions</h2>
-              {freeSessionsQuery.isPending ? (
-                <p className="mt-4 text-sm text-text-muted" role="status">Loading free sessions...</p>
-              ) : freeSessionsQuery.isError ? (
-                <p className="mt-4 text-sm text-text-muted">Free sessions are currently unavailable.</p>
-              ) : freeSessionsQuery.data.length === 0 ? (
-                <p className="mt-4 text-text-muted">No free sessions are available yet.</p>
-              ) : (
-                <ul className="mt-5 space-y-3">
-                  {freeSessionsQuery.data.map((session) => (
-                    <li key={`${session.module.id}/${session.id}`} className="rounded-lg border border-white/10 px-4 py-3">
-                      <span className="rounded-full bg-accent px-2 py-1 text-xs font-bold text-white">FREE</span>
-                      <Link
-                        to={buildSessionDetailPath(course.slug, session.module.id, session.id)!}
-                        className="ml-3 font-semibold text-text hover:text-accent"
-                      >
-                        {session.title}
-                      </Link>
-                      <p className="mt-2 text-sm text-text-muted">{session.module.title}</p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </GlassCard>
-
-            <GlassCard className="mt-6 p-7 sm:p-8">
               <h2 className="text-2xl font-bold text-text">Course curriculum</h2>
               {enrollmentLoading ? (
                 <p className="mt-4 text-sm text-text-muted" role="status">

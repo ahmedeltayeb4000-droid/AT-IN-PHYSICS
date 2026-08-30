@@ -283,7 +283,7 @@ export function SessionDetailPage() {
                 {session.title}
               </h1>
               {publicFreeAccess ? (
-                <span className="mt-4 inline-flex rounded-full bg-accent px-3 py-1 text-xs font-bold text-white">FREE</span>
+                <span className="mt-4 inline-flex rounded-full bg-accent px-3 py-1 text-xs font-bold text-white">OPENED SESSION</span>
               ) : null}
               <p className="mt-3 text-text-muted">{course.title}</p>
               {session.videoAssetId ? (

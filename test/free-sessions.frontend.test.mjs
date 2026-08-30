@@ -24,19 +24,40 @@ test("public Free Session projection accepts only minimized deterministic displa
   ]) assert.throws(() => mapFreeSessionDiscoveryManifest(value));
 });
 
-test("public UI exposes FREE navigation and explicit free-or-enrolled content without public PDF downloads", async () => {
-  const [coursePage, sessionPage, repository] = await Promise.all([
+test("public UI exposes Opened Sessions from Home without public PDF downloads", async () => {
+  const [homePage, coursePage, sessionPage, repository, router] = await Promise.all([
+    readFile(new URL("../src/pages/home/HomePage.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/pages/courses/CourseDetailPage.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/pages/courses/SessionDetailPage.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/features/courses/courseRepository.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/app/router/AppRouter.tsx", import.meta.url), "utf8"),
   ]);
-  assert.match(coursePage, /Free sessions/);
-  assert.match(coursePage, />FREE</);
+  assert.match(homePage, /Opened Sessions/);
+  assert.match(homePage, /getPublicFreeSessionsForCourses/);
+  assert.match(homePage, /buildSessionDetailPath/);
+  assert.doesNotMatch(coursePage, /Free sessions|getPublicFreeSessions/);
+  assert.match(
+    router,
+    /path="courses\/:slug\/modules\/:moduleId\/sessions\/:sessionId"\s*element={<SessionDetailPage \/>}/,
+  );
   assert.match(sessionPage, /getPublicFreeSessionDetail/);
   assert.match(sessionPage, /publicFreeAccess/);
   assert.match(sessionPage, /entitled \? \(/);
   assert.match(sessionPage, /SessionResourceList/);
+  assert.match(sessionPage, /entitled \? \([\s\S]*?<SessionResourceList/);
   assert.match(repository, /FREE_SESSION_DISCOVERY_DOCUMENT_ID/);
   assert.doesNotMatch(repository, /collectionGroup/);
-  assert.doesNotMatch(coursePage + sessionPage + repository, /contentKey/);
+  assert.doesNotMatch(homePage + coursePage + sessionPage + repository, /contentKey/);
+});
+
+test("Home has no unverified numeric marketing claims", async () => {
+  const homePage = await readFile(
+    new URL("../src/pages/home/HomePage.tsx", import.meta.url),
+    "utf8",
+  );
+  for (const claim of ["500+", 'value: "12"', "150+", "200+"]) {
+    assert.doesNotMatch(homePage, new RegExp(claim.replace("+", "\\+")));
+  }
+  assert.match(homePage, /Concept-first/);
+  assert.match(homePage, /Protected playback/);
 });

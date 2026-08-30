@@ -169,6 +169,16 @@ export async function getPublicFreeSessions(
   );
 }
 
+export async function getPublicFreeSessionsForCourses(
+  courses: readonly Course[],
+): Promise<PublicFreeSession[]> {
+  const sessions = await Promise.all(courses.map(getPublicFreeSessions));
+  return sessions.flat().sort((left, right) => {
+    const byCourse = left.course.title.localeCompare(right.course.title, "en");
+    return byCourse || left.module.order - right.module.order || left.order - right.order || left.id.localeCompare(right.id, "en");
+  });
+}
+
 export async function getPublicFreeSessionDetail(
   course: Course,
   moduleId: string,

@@ -6,7 +6,11 @@ import { PageTransition } from "../../components/ui/PageTransition";
 import { Badge } from "../../components/ui/Badge";
 import { GlassCard } from "../../components/ui/Card";
 import { PhysicsBackground } from "../../components/brand/PhysicsBackground";
-import { getCourses } from "../../features/courses/courseRepository";
+import {
+  getCourses,
+  getPublicFreeSessionsForCourses,
+} from "../../features/courses/courseRepository";
+import { buildSessionDetailPath } from "../../features/courses/sessionDetail";
 
 export function HomePage() {
   const { t } = useTranslation();
@@ -17,6 +21,11 @@ export function HomePage() {
   } = useQuery({
     queryKey: ["courses", "published"],
     queryFn: getCourses,
+  });
+  const openedSessions = useQuery({
+    queryKey: ["opened-sessions", courses?.map((course) => course.id) ?? []],
+    queryFn: () => getPublicFreeSessionsForCourses(courses!),
+    enabled: Boolean(courses),
   });
   const features = (t('features.items', { returnObjects: true }) as string[]) || [];
   const faqs = (t('faq.items', { returnObjects: true }) as { q: string, a: string }[]) || [];
@@ -36,14 +45,14 @@ export function HomePage() {
         <PageContainer>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             {[
-              { label: t('stats.students'), value: "500+" },
-              { label: t('stats.courses'), value: "12" },
-              { label: t('stats.lessons'), value: "150+" },
-              { label: t('stats.certificates'), value: "200+" }
-            ].map((stat, i) => (
-              <div key={i} className="text-center">
-                <div className="text-3xl font-bold text-accent">{stat.value}</div>
-                <div className="text-sm text-text-muted mt-1 uppercase tracking-wider">{stat.label}</div>
+              { label: "Learn with clarity", value: "Concept-first" },
+              { label: "Study at your pace", value: "Flexible access" },
+              { label: "Watch with confidence", value: "Protected playback" },
+              { label: "Build real understanding", value: "Focused practice" },
+            ].map((item) => (
+              <div key={item.value} className="text-center">
+                <div className="text-xl font-bold text-accent">{item.value}</div>
+                <div className="text-sm text-text-muted mt-1 uppercase tracking-wider">{item.label}</div>
               </div>
             ))}
           </div>
@@ -79,6 +88,49 @@ export function HomePage() {
                     className="mt-auto w-full py-2 bg-accent text-white rounded-lg font-bold text-center"
                   >
                     View Course
+                  </Link>
+                </GlassCard>
+              ))}
+            </div>
+          )}
+        </PageContainer>
+      </Section>
+
+      <Section className="bg-panel/40">
+        <PageContainer>
+          <div className="mx-auto max-w-3xl text-center">
+            <Badge tone="info">PUBLIC SAMPLE LESSONS</Badge>
+            <h2 className="mt-5 text-4xl font-bold text-text">Opened Sessions</h2>
+            <p className="mt-3 text-text-muted">
+              Explore selected lessons without enrollment or an Access Code.
+            </p>
+          </div>
+          {openedSessions.isPending ? (
+            <div className="grid min-h-40 place-items-center text-sm text-text-muted" role="status">
+              Loading opened sessions...
+            </div>
+          ) : openedSessions.isError ? (
+            <div className="grid min-h-40 place-items-center text-sm text-text-muted" role="alert">
+              Opened Sessions are currently unavailable.
+            </div>
+          ) : openedSessions.data.length === 0 ? (
+            <div className="grid min-h-40 place-items-center text-sm text-text-muted">
+              No Opened Sessions are available yet.
+            </div>
+          ) : (
+            <div className="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+              {openedSessions.data.map((session) => (
+                <GlassCard key={`${session.course.id}/${session.module.id}/${session.id}`} className="flex flex-col p-6">
+                  <Badge tone="info">OPENED</Badge>
+                  <h3 className="mt-4 text-xl font-bold text-text">{session.title}</h3>
+                  <p className="mt-2 text-sm text-text-muted">
+                    {session.course.title} · {session.module.title}
+                  </p>
+                  <Link
+                    to={buildSessionDetailPath(session.course.slug, session.module.id, session.id)!}
+                    className="mt-6 inline-flex self-start rounded-lg bg-accent px-4 py-2 text-sm font-bold text-white"
+                  >
+                    Open Session
                   </Link>
                 </GlassCard>
               ))}
