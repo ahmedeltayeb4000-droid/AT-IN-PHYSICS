@@ -61,7 +61,8 @@ async function readTarget(db: Firestore, review: OwnerDeployReview): Promise<Tar
   const course = db.doc(`courses/${courseId}`);
   const module = db.doc(`courses/${courseId}/modules/${moduleId}`);
   const session = db.doc(`courses/${courseId}/modules/${moduleId}/sessions/${sessionId}`);
-  const [courseSnap, moduleSnap, sessionSnap] = await db.getAll(course, module, session);
+  const access = session.collection("videoAccess").doc("primary");
+  const [courseSnap, moduleSnap, sessionSnap, accessSnap] = await db.getAll(course, module, session, access);
   if (!courseSnap.exists || !moduleSnap.exists || !sessionSnap.exists)
     throw new Error("Video binding target hierarchy was not found.");
   validateTrustedCourseDocument(courseSnap.data(), courseId);
@@ -69,13 +70,41 @@ async function readTarget(db: Firestore, review: OwnerDeployReview): Promise<Tar
   const data = validateSessionForVideoPublication(sessionSnap.data());
   const revisionMillis = sessionSnap.updateTime?.toMillis();
   if (revisionMillis === undefined) throw new Error("Session revision is unavailable.");
+  const hasVideoAssetId = Object.prototype.hasOwnProperty.call(data, "videoAssetId");
+  if (hasVideoAssetId || accessSnap.exists)
+    throw new Error("Initial video binding requires a cleanly unbound Session. Use Protected Content replacement for an existing video.");
   return {
     title: data.title,
-    currentVideoAssetId: Object.prototype.hasOwnProperty.call(data, "videoAssetId")
-      ? (data.videoAssetId as string)
-      : null,
+    currentVideoAssetId: null,
     revisionMillis,
   };
+}
+
+async function applyInitialBinding(
+  db: Firestore,
+  prepared: Awaited<ReturnType<typeof prepareVideoPublicationPackage>>,
+  expectedSessionRevisionMillis: number,
+) {
+  const input = prepared.input;
+  const sessionRef = db.doc(`courses/${input.courseId}/modules/${input.moduleId}/sessions/${input.sessionId}`);
+  const accessRef = sessionRef.collection("videoAccess").doc("primary");
+  await db.runTransaction(async (transaction) => {
+    const sessionSnap = await transaction.get(sessionRef);
+    const accessSnap = await transaction.get(accessRef);
+    if (!sessionSnap.exists || sessionSnap.updateTime?.toMillis() !== expectedSessionRevisionMillis)
+      throw new Error("Session changed after video binding review.");
+    const session = validateSessionForVideoPublication(sessionSnap.data());
+    if (Object.prototype.hasOwnProperty.call(session, "videoAssetId") || accessSnap.exists)
+      throw new Error("Initial video binding requires a cleanly unbound Session.");
+    transaction.update(sessionRef, { videoAssetId: input.videoAssetId });
+    transaction.create(accessRef, { videoAssetId: input.videoAssetId, contentKey: input.contentKey });
+  });
+  const [sessionSnap, accessSnap] = await db.getAll(sessionRef, accessRef);
+  const session = sessionSnap.exists ? validateSessionForVideoPublication(sessionSnap.data()) : null;
+  const access = accessSnap.data() as Record<string, unknown> | undefined;
+  const verified = session?.videoAssetId === input.videoAssetId && accessSnap.exists &&
+    access?.videoAssetId === input.videoAssetId && access?.contentKey === input.contentKey && Object.keys(access).length === 2;
+  return { applyStatus: "created" as const, postApplyVerified: verified };
 }
 
 async function revalidate(
@@ -83,6 +112,16 @@ async function revalidate(
   deployment: OwnerVerifiedDeployment,
   projectId: string,
   dependencies: Dependencies,
+) {
+  const validated = await validateOwnerVerifiedVideoDeployment(deployment, projectId, dependencies);
+  const target = await (dependencies.readTarget ?? readTarget)(db, validated.review);
+  return { ...validated, target };
+}
+
+export async function validateOwnerVerifiedVideoDeployment(
+  deployment: OwnerVerifiedDeployment,
+  projectId: string,
+  dependencies: Pick<Dependencies, "verifyRemote" | "preparePackage"> = {},
 ) {
   const review = deployment.review;
   if (deployment.status !== "VERIFIED_DEPLOYED" || review.safe.projectId !== projectId)
@@ -99,8 +138,7 @@ async function revalidate(
     prepared.summary.artifactSha256 !== review.safe.artifactSha256 ||
     prepared.summary.encryptedSize !== review.safe.artifactSize
   ) throw new Error("Verified deployment no longer matches the trusted descriptor.");
-  const target = await (dependencies.readTarget ?? readTarget)(db, review);
-  return { review, prepared, target };
+  return { review, prepared };
 }
 
 function identity(deployment: OwnerVerifiedDeployment, target: TargetState) {
@@ -127,6 +165,8 @@ export async function createOwnerBindingReview(
   dependencies: Dependencies = {},
 ): Promise<OwnerBindingReview> {
   const { review, prepared, target } = await revalidate(db, deployment, projectId, dependencies);
+  if (target.currentVideoAssetId !== null)
+    throw new Error("Initial video binding requires a cleanly unbound Session. Use Protected Content replacement for an existing video.");
   await (dependencies.publishPrepared ?? runPreparedVideoPublication)(db, prepared, false);
   return {
     reviewId,
@@ -157,17 +197,16 @@ export async function applyOwnerBindingReview(
   dependencies: Dependencies = {},
 ) {
   const { prepared, target } = await revalidate(db, binding.deployment, projectId, dependencies);
+  if (target.currentVideoAssetId !== null)
+    throw new Error("Initial video binding requires a cleanly unbound Session.");
   const fresh = createHash("sha256")
     .update(JSON.stringify(identity(binding.deployment, target)))
     .digest("hex");
   if (target.revisionMillis !== binding.revisionMillis || fresh !== binding.fingerprint)
     throw new Error("Video binding review became stale.");
-  const result = await (dependencies.publishPrepared ?? runPreparedVideoPublication)(
-    db,
-    prepared,
-    true,
-    binding.revisionMillis,
-  );
+  const result = dependencies.publishPrepared
+    ? await dependencies.publishPrepared(db, prepared, true, binding.revisionMillis)
+    : await applyInitialBinding(db, prepared, binding.revisionMillis);
   return {
     status: result.applyStatus,
     postApplyVerified: result.postApplyVerified,

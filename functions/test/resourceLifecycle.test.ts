@@ -294,6 +294,15 @@ test("Owner Control enforces the complete resource capability order, confirmatio
     assert.equal((await postJson("/api/resource/session/deploy/apply", { reviewId: deployReviewId, confirmation: "wrong" })).status, 400);
     const deployResponse = await postJson("/api/resource/session/deploy/apply", { reviewId: deployReviewId, confirmation: "DEPLOY HOSTING TO PRODUCTION" });
     const deploymentId = (await deployResponse.json()).deployment.deploymentId as string;
+    const mismatchResponse = await postJson("/api/resource/session/replace/review", {
+      deploymentId,
+      oldResourceId: "old-resource",
+      expectedCourseId: "mechanics",
+      expectedModuleId: "motion",
+      expectedSessionId: "different-session",
+    });
+    assert.equal(mismatchResponse.status, 400);
+    assert.doesNotMatch(await mismatchResponse.text(), /contentKey|revision|fingerprint|descriptor|path/i);
     const bindReviewResponse = await postJson("/api/resource/session/bind/review", { deploymentId });
     const bindReviewText = await bindReviewResponse.text();
     assert.doesNotMatch(bindReviewText, /contentKey|${key}/);

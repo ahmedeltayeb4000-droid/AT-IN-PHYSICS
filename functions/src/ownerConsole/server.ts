@@ -132,6 +132,28 @@ import {
   type AccessCodeReview,
 } from "./accessCodeManagement.js";
 import { ACCESS_CODE_MANAGEMENT_CLIENT_JS } from "./accessCodeManagementClient.js";
+import { PROTECTED_CONTENT_CLIENT_JS } from "./protectedContentClient.js";
+import {
+  LifecycleReviewRegistry,
+  RESOURCE_REMOVE_CONFIRMATION,
+  RESOURCE_REPLACE_CONFIRMATION,
+  VIDEO_REPLACE_CONFIRMATION,
+  VIDEO_UNBIND_CONFIRMATION,
+  applyResourceRemoval,
+  applyResourceReplacement,
+  applyVideoReplacement,
+  applyVideoUnbind,
+  readSessionProtectedContentInventory,
+  runLifecycleReview,
+  reviewResourceRemoval,
+  reviewResourceReplacement,
+  reviewVideoReplacement,
+  reviewVideoUnbind,
+  type ResourceRemoveReview,
+  type ResourceReplaceReview,
+  type VideoReplaceReview,
+  type VideoUnbindReview,
+} from "./protectedContentLifecycle.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -143,6 +165,9 @@ const JSON_HEADERS = {
   "referrer-policy": "no-referrer",
   "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
 };
+const PROTECTED_CONTENT_TARGET_BINDING_JS = `q('#protectedReplaceVideo').onclick=async()=>{try{if(!videoDeploymentId)throw Error('Prepare, deploy, and verify a new immutable video first.');const t=protectedTargetValue,d=await protectedPost('/api/video/replace/review',{deploymentId:videoDeploymentId,expectedCourseId:t.courseId,expectedModuleId:t.moduleId,expectedSessionId:t.sessionId}),x=d.review;showProtectedReview('Replace Session Video','Course: '+x.courseId+'\\nModule: '+x.moduleId+'\\nSession: '+x.sessionTitle+' ('+x.sessionId+')\\nCurrent: '+x.currentVideoAssetId+'\\nNew: '+x.newVideoAssetId+'\\n'+x.warning,'/api/video/replace/apply',d.reviewId,'REPLACE SESSION VIDEO')}catch(e){showError(e)}};reviewProtectedResourceReplace=async resource=>{try{if(!resourceDeploymentId)throw Error('Prepare, deploy, and verify a new immutable PDF first.');const t=protectedTargetValue,d=await protectedPost('/api/resource/session/replace/review',{deploymentId:resourceDeploymentId,oldResourceId:resource.resourceId,expectedCourseId:t.courseId,expectedModuleId:t.moduleId,expectedSessionId:t.sessionId}),x=d.review;showProtectedReview('Replace Session Resource','Course: '+x.courseId+'\\nModule: '+x.moduleId+'\\nSession: '+x.sessionId+'\\nCurrent: '+x.oldTitle+' ('+x.oldResourceId+')\\nNew: '+x.newTitle+' ('+x.newResourceId+')\\n'+x.warning,'/api/resource/session/replace/apply',d.reviewId,'REPLACE SESSION RESOURCE')}catch(e){showError(e)}};`;
+
+const LEGACY_VIDEO_BIND_CREATE_ONLY_CLIENT_JS = `let legacyVideoBindCreateAllowed=true;const priorOpenVideoForCreateOnly=openVideo;openVideo=x=>{priorOpenVideoForCreateOnly(x);legacyVideoBindCreateAllowed=!x.hasVideo;if(!legacyVideoBindCreateAllowed){videoBindReviewButton.disabled=true;videoBindReviewButton.title='Existing videos must be managed through Protected Content → Replace Video.'}else videoBindReviewButton.title='Create the initial video binding.'};new MutationObserver(()=>{if(!legacyVideoBindCreateAllowed)videoBindReviewButton.disabled=true}).observe(msg,{childList:true});`;
 
 export type OwnerConsoleDependencies = Readonly<{
   auth: Auth;
@@ -313,6 +338,19 @@ function requiredString(value: unknown): string {
   return value;
 }
 
+export function requireExpectedTarget(
+  input: Record<string, unknown>,
+  trusted: { courseId: string; moduleId: string; sessionId: string },
+) {
+  const expected = {
+    courseId: validateCourseId(input.expectedCourseId),
+    moduleId: validateCourseId(input.expectedModuleId),
+    sessionId: validateCourseId(input.expectedSessionId),
+  };
+  if (expected.courseId !== trusted.courseId || expected.moduleId !== trusted.moduleId || expected.sessionId !== trusted.sessionId)
+    throw new Error("The verified deployment target does not match the managed Session.");
+}
+
 export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const csrf = randomBytes(32).toString("base64url");
   const reviews = new Map<string, Review>();
@@ -385,6 +423,10 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const deployedResourceReleases = new Map<string, OwnerResourceDeployReview>();
   const verifiedResourceDeployments = new Map<string, OwnerVerifiedResourceDeployment>();
   const resourceBindingReviews = new Map<string, { review: OwnerResourceBindingReview; used: boolean }>();
+  const videoReplaceReviews = new LifecycleReviewRegistry<VideoReplaceReview>();
+  const videoUnbindReviews = new LifecycleReviewRegistry<VideoUnbindReview>();
+  const resourceReplaceReviews = new LifecycleReviewRegistry<ResourceReplaceReview>();
+  const resourceRemoveReviews = new LifecycleReviewRegistry<ResourceRemoveReview>();
   const server = createServer(async (req, res) => {
     const address = server.address() as AddressInfo | null;
     const origin = `http://${OWNER_CONSOLE_HOST}:${address?.port ?? OWNER_CONSOLE_DEFAULT_PORT}`;
@@ -412,7 +454,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}\n${ACCESS_CODE_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
+          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_TARGET_BINDING_JS}\n${LEGACY_VIDEO_BIND_CREATE_ONLY_CLIENT_JS}\n${ACCESS_CODE_CLIENT_JS}\n${ACCESS_CODE_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
@@ -531,6 +573,101 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         )
           return fail(res, 415);
         const input = await body(req);
+        if (url.pathname === "/api/protected-content/session/inventory") {
+          exactInput(input, ["courseId", "moduleId", "sessionId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const inventory = await readSessionProtectedContentInventory(deps.db, {
+            courseId: validateCourseId(input.courseId), moduleId: validateCourseId(input.moduleId), sessionId: validateCourseId(input.sessionId),
+          });
+          return send(res, 200, { inventory });
+        }
+        if (url.pathname === "/api/video/replace/review") {
+          exactInput(input, ["deploymentId", "expectedCourseId", "expectedModuleId", "expectedSessionId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const deploymentId = requiredString(input.deploymentId);
+          const deployment = verifiedDeployments.get(deploymentId);
+          if (!deployment) return fail(res, 409);
+          requireExpectedTarget(input, deployment.review.safe.target);
+          const review = await reviewVideoReplacement(deps.db, deployment, deps.projectId);
+          const reviewId = randomBytes(24).toString("base64url");
+          videoReplaceReviews.add(reviewId, review);
+          return send(res, 200, { reviewId, review: review.safe });
+        }
+        if (url.pathname === "/api/video/replace/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          if (requiredString(input.confirmation) !== VIDEO_REPLACE_CONFIRMATION) return fail(res, 400);
+          const reviewId = requiredString(input.reviewId);
+          let deploymentId: string | undefined;
+          const result = await runLifecycleReview(videoReplaceReviews, reviewId, async (review) => {
+            deploymentId = review.deployment.deploymentId;
+            return applyVideoReplacement(deps.db, review);
+          });
+          if (!result) return fail(res, 409);
+          if (deploymentId) verifiedDeployments.delete(deploymentId);
+          return send(res, 200, { result });
+        }
+        if (url.pathname === "/api/video/unbind/review") {
+          exactInput(input, ["courseId", "moduleId", "sessionId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const review = await reviewVideoUnbind(deps.db, { courseId: validateCourseId(input.courseId), moduleId: validateCourseId(input.moduleId), sessionId: validateCourseId(input.sessionId) });
+          const reviewId = randomBytes(24).toString("base64url");
+          videoUnbindReviews.add(reviewId, review);
+          return send(res, 200, { reviewId, review: review.safe });
+        }
+        if (url.pathname === "/api/video/unbind/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          if (requiredString(input.confirmation) !== VIDEO_UNBIND_CONFIRMATION) return fail(res, 400);
+          const reviewId = requiredString(input.reviewId);
+          const result = await runLifecycleReview(videoUnbindReviews, reviewId, (review) => applyVideoUnbind(deps.db, review));
+          if (!result) return fail(res, 409);
+          return send(res, 200, { result });
+        }
+        if (url.pathname === "/api/resource/session/replace/review") {
+          exactInput(input, ["deploymentId", "oldResourceId", "expectedCourseId", "expectedModuleId", "expectedSessionId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const deployment = verifiedResourceDeployments.get(requiredString(input.deploymentId));
+          if (!deployment) return fail(res, 409);
+          const scope = deployment.review.release.preparation.identity.scope;
+          if (scope.type !== "session") return fail(res, 409);
+          requireExpectedTarget(input, scope);
+          const review = await reviewResourceReplacement(deps.db, deployment, deps.projectId, requiredString(input.oldResourceId));
+          const reviewId = randomBytes(24).toString("base64url");
+          resourceReplaceReviews.add(reviewId, review);
+          return send(res, 200, { reviewId, review: review.safe });
+        }
+        if (url.pathname === "/api/resource/session/replace/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          if (requiredString(input.confirmation) !== RESOURCE_REPLACE_CONFIRMATION) return fail(res, 400);
+          const reviewId = requiredString(input.reviewId);
+          let deploymentId: string | undefined;
+          const result = await runLifecycleReview(resourceReplaceReviews, reviewId, async (review) => {
+            deploymentId = review.deployment.deploymentId;
+            return applyResourceReplacement(deps.db, review);
+          });
+          if (!result) return fail(res, 409);
+          if (deploymentId) verifiedResourceDeployments.delete(deploymentId);
+          return send(res, 200, { result });
+        }
+        if (url.pathname === "/api/resource/session/remove/review") {
+          exactInput(input, ["courseId", "moduleId", "sessionId", "resourceId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const review = await reviewResourceRemoval(deps.db, { courseId: validateCourseId(input.courseId), moduleId: validateCourseId(input.moduleId), sessionId: validateCourseId(input.sessionId) }, requiredString(input.resourceId));
+          const reviewId = randomBytes(24).toString("base64url");
+          resourceRemoveReviews.add(reviewId, review);
+          return send(res, 200, { reviewId, review: review.safe });
+        }
+        if (url.pathname === "/api/resource/session/remove/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          if (requiredString(input.confirmation) !== RESOURCE_REMOVE_CONFIRMATION) return fail(res, 400);
+          const reviewId = requiredString(input.reviewId);
+          const result = await runLifecycleReview(resourceRemoveReviews, reviewId, (review) => applyResourceRemoval(deps.db, review));
+          if (!result) return fail(res, 409);
+          return send(res, 200, { result });
+        }
         if (url.pathname === "/api/resource/session/release") {
           exactInput(input, ["preparationId"]);
           await authorize(deps.auth, deps.ownerUid);

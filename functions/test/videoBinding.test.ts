@@ -68,3 +68,50 @@ test("anything other than VERIFIED_DEPLOYED is ineligible", async () => {
     /identity is invalid/,
   );
 });
+
+test("legacy binding is create-only and rejects replacement before any publication write", async () => {
+  let publicationCalls = 0;
+  const dependencies = {
+    verifyRemote: async () => ({ verified: true as const, url: "trusted", size: 42, sha256: "a".repeat(64) }),
+    preparePackage: async () => prepared,
+    readTarget: async () => ({ title: "Session title", currentVideoAssetId: "old-video", revisionMillis: 100 }),
+    publishPrepared: async () => { publicationCalls += 1; throw new Error("must not run"); },
+  };
+  await assert.rejects(
+    createOwnerBindingReview({} as Firestore, deployment, "at-in-physics", "binding-review", dependencies),
+    /create-only|cleanly unbound|replacement/i,
+  );
+  assert.equal(publicationCalls, 0);
+});
+
+test("legacy binding fails closed for every present or malformed authoritative video state", async () => {
+  const course = { slug: "course", title: "Course", shortDescription: "Description", status: "draft" };
+  const module = { title: "Module", order: 1 };
+  const baseSession = { title: "Session", order: 1, publicationStatus: "draft" };
+  const variants = [
+    { session: { ...baseSession, videoAssetId: "old-video" }, accessExists: true, access: { videoAssetId: "old-video", contentKey: secret } },
+    { session: { ...baseSession, videoAssetId: "old-video" }, accessExists: false, access: undefined },
+    { session: baseSession, accessExists: true, access: { videoAssetId: "old-video", contentKey: secret } },
+    { session: { ...baseSession, videoAssetId: "old-video" }, accessExists: true, access: { videoAssetId: "different", contentKey: secret } },
+    { session: baseSession, accessExists: true, access: { malformed: true } },
+  ];
+  for (const variant of variants) {
+    let publicationCalls = 0;
+    const fakeDb = {
+      doc: (path: string) => ({ path, collection: (name: string) => ({ doc: (id: string) => ({ path: `${path}/${name}/${id}` }) }) }),
+      getAll: async (...refs: Array<{ path: string }>) => refs.map((ref) => {
+        const isCourse = ref.path === "courses/course";
+        const isModule = ref.path.endsWith("/modules/module");
+        const isAccess = ref.path.endsWith("/videoAccess/primary");
+        const data = isCourse ? course : isModule ? module : isAccess ? variant.access : variant.session;
+        return { exists: isAccess ? variant.accessExists : true, data: () => data, updateTime: isAccess ? undefined : { toMillis: () => 100 } };
+      }),
+    } as unknown as Firestore;
+    await assert.rejects(createOwnerBindingReview(fakeDb, deployment, "at-in-physics", "review", {
+      verifyRemote: async () => ({ verified: true as const, url: "trusted", size: 42, sha256: "a".repeat(64) }),
+      preparePackage: async () => prepared,
+      publishPrepared: async () => { publicationCalls += 1; throw new Error("must not run"); },
+    }), /cleanly unbound|replacement/i);
+    assert.equal(publicationCalls, 0);
+  }
+});

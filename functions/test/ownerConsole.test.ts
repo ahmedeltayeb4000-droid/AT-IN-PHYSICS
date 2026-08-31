@@ -1407,6 +1407,15 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
         body: JSON.stringify(value),
       });
     assert.equal((await postJson("/api/video/bind/review", { deploymentId: "unknown" })).status, 409);
+    for (const [path, confirmation] of [
+      ["/api/video/replace/apply", "WRONG"],
+      ["/api/video/unbind/apply", "WRONG"],
+      ["/api/resource/session/replace/apply", "WRONG"],
+      ["/api/resource/session/remove/apply", "WRONG"],
+    ] as const) assert.equal((await postJson(path, { reviewId: "missing", confirmation })).status, 400);
+    assert.equal((await postJson("/api/protected-content/session/inventory", { courseId: "course", moduleId: "module" })).status, 400);
+    assert.equal((await postJson("/api/protected-content/session/inventory", { courseId: "course", moduleId: "module", sessionId: "session", extra: true })).status, 400);
+    assert.equal((await postJson("/api/protected-content/session/inventory", { courseId: "../course", moduleId: "module", sessionId: "session" })).status, 400);
     const recoveryResponse = await postJson("/api/video/deploy/recover", safe.target);
     assert.equal(recoveryResponse.status, 200);
     const recoveryText = await recoveryResponse.text();
@@ -1454,6 +1463,14 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
     assert.doesNotMatch(deployText, /contentKey|SECRET|credential|token/i);
     const deploymentId = JSON.parse(deployText).deployment
       .deploymentId as string;
+    const targetMismatch = await postJson("/api/video/replace/review", {
+      deploymentId,
+      expectedCourseId: safe.target.courseId,
+      expectedModuleId: safe.target.moduleId,
+      expectedSessionId: "different-session",
+    });
+    assert.equal(targetMismatch.status, 400);
+    assert.doesNotMatch(await targetMismatch.text(), /contentKey|revision|fingerprint|descriptor|path/i);
     const bindingReviewResponse = await postJson("/api/video/bind/review", { deploymentId });
     assert.equal(bindingReviewResponse.status, 200);
     const bindingReviewText = await bindingReviewResponse.text();

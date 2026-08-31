@@ -305,6 +305,14 @@ async function verifyResourceRemote(deployment: OwnerVerifiedResourceDeployment)
   return verifyOwnerRemoteArtifact(deployment.review.adapter);
 }
 
+export async function verifyOwnerResourceDeployment(
+  deployment: OwnerVerifiedResourceDeployment,
+) {
+  if (deployment.status !== "VERIFIED_DEPLOYED")
+    throw new Error("Verified resource deployment identity is invalid.");
+  return verifyResourceRemote(deployment);
+}
+
 function paths(identity: ProtectedResourcePackageIdentity) {
   if (identity.scope.type !== "session") throw new Error("Only Session resources are supported.");
   const prefix = `courses/${identity.scope.courseId}/modules/${identity.scope.moduleId}/sessions/${identity.scope.sessionId}/resources/${identity.resourceId}`;
