@@ -29,6 +29,7 @@ import { ACCESS_CODE_CLIENT_JS } from "../src/ownerConsole/accessCodeClient.js";
 import type { CoursePublicationReview } from "../src/ownerConsole/coursePublication.js";
 import type { EnrollmentReview } from "../src/ownerConsole/enrollmentManagement.js";
 import type { AccessCodeReview } from "../src/ownerConsole/accessCodeManagement.js";
+import type { SessionEmergencyReview } from "../src/ownerConsole/sessionEmergency.js";
 
 const course = (id: string, title = "Course") => ({
   id,
@@ -1671,6 +1672,74 @@ test("trusted Owner Free/Paid review and apply is authorized, confirmed for publ
     assert.equal(reviewCalls, 1);
     assert.equal(applyCalls, 1);
     assert.equal((await post("/api/sessions/free/review", { courseId: "mechanics", moduleId: "motion", sessionId: "intro", isFree: "yes" })).status, 400);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("Emergency Session routes are exact, protected, confirmed, reusable after wrong confirmation, and one-time", async () => {
+  let reviewCalls = 0;
+  let applyCalls = 0;
+  const target = { courseId: "mechanics", moduleId: "motion", sessionId: "intro" } as const;
+  const emergencyReview: SessionEmergencyReview = {
+    operation: "session-emergency-withdrawal",
+    target,
+    sessionRevisionMillis: 123,
+    safe: {
+      ...target,
+      courseTitle: "Mechanics",
+      moduleTitle: "Motion",
+      sessionTitle: "Introduction",
+      currentPublicationStatus: "published",
+      releaseState: "released",
+      isFree: true,
+      hasVideo: true,
+      protectedResourceCount: 2,
+      bindingsPreserved: true,
+      warning: "Bindings remain preserved.",
+    },
+  };
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: {} as Firestore,
+    ownerUid: "trusted-owner",
+    projectId: "demo-at-in-physics",
+    authorize: async () => {},
+    reviewSessionEmergency: async (_db, value) => {
+      reviewCalls += 1;
+      assert.deepEqual(value, target);
+      return emergencyReview;
+    },
+    applySessionEmergency: async (_db, review) => {
+      applyCalls += 1;
+      assert.equal(review.sessionRevisionMillis, 123);
+      return { status: "COMMITTED_AND_VERIFIED", postApplyVerified: true } as const;
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const post = (path: string, value: unknown, headers: Record<string, string> = {}) => fetch(origin + path, {
+    method: "POST",
+    headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests, ...headers },
+    body: JSON.stringify(value),
+  });
+  try {
+    const input = { ...target };
+    assert.equal((await post("/api/sessions/emergency/review", input, { origin: "http://evil.example" })).status, 403);
+    assert.equal((await post("/api/sessions/emergency/review", input, { "x-owner-control-csrf": "wrong" })).status, 403);
+    assert.equal((await post("/api/sessions/emergency/review", { ...input, extra: true })).status, 400);
+    const response = await post("/api/sessions/emergency/review", input);
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.doesNotMatch(text, /revisionMillis|fingerprint|contentKey|stack|filesystem|[A-Z]:\\/i);
+    const reviewId = JSON.parse(text).reviewId as string;
+    assert.equal((await post("/api/sessions/emergency/apply", { reviewId, confirmation: "WRONG" })).status, 400);
+    assert.equal(applyCalls, 0);
+    assert.equal((await post("/api/sessions/emergency/apply", { reviewId, confirmation: "WITHDRAW SESSION NOW", extra: true })).status, 400);
+    assert.equal((await post("/api/sessions/emergency/apply", { reviewId, confirmation: "WITHDRAW SESSION NOW" })).status, 200);
+    assert.equal((await post("/api/sessions/emergency/apply", { reviewId, confirmation: "WITHDRAW SESSION NOW" })).status, 409);
+    assert.equal(reviewCalls, 1);
+    assert.equal(applyCalls, 1);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

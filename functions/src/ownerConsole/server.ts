@@ -133,6 +133,13 @@ import {
 } from "./accessCodeManagement.js";
 import { ACCESS_CODE_MANAGEMENT_CLIENT_JS } from "./accessCodeManagementClient.js";
 import { PROTECTED_CONTENT_CLIENT_JS } from "./protectedContentClient.js";
+import { SESSION_EMERGENCY_CLIENT_JS } from "./sessionEmergencyClient.js";
+import {
+  SESSION_EMERGENCY_CONFIRMATION,
+  applySessionEmergencyWithdrawal,
+  reviewSessionEmergencyWithdrawal,
+  type SessionEmergencyReview,
+} from "./sessionEmergency.js";
 import {
   LifecycleReviewRegistry,
   RESOURCE_REMOVE_CONFIRMATION,
@@ -213,6 +220,8 @@ export type OwnerConsoleDependencies = Readonly<{
   inspectAccessCode?: typeof inspectAccessCode;
   reviewAccessCodeRevocation?: typeof reviewAccessCodeRevocation;
   applyAccessCodeRevocation?: typeof applyAccessCodeRevocation;
+  reviewSessionEmergency?: typeof reviewSessionEmergencyWithdrawal;
+  applySessionEmergency?: typeof applySessionEmergencyWithdrawal;
 }>;
 
 type Review = {
@@ -398,6 +407,8 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const inspectManagedAccessCode = deps.inspectAccessCode ?? inspectAccessCode;
   const reviewManagedAccessCode = deps.reviewAccessCodeRevocation ?? reviewAccessCodeRevocation;
   const applyManagedAccessCode = deps.applyAccessCodeRevocation ?? applyAccessCodeRevocation;
+  const reviewEmergency = deps.reviewSessionEmergency ?? reviewSessionEmergencyWithdrawal;
+  const applyEmergency = deps.applySessionEmergency ?? applySessionEmergencyWithdrawal;
   const freeStatusReviews = new Map<string, { review: SessionFreeStatusReview; used: boolean }>();
   const coursePublicationReviews = new Map<
     string,
@@ -427,6 +438,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const videoUnbindReviews = new LifecycleReviewRegistry<VideoUnbindReview>();
   const resourceReplaceReviews = new LifecycleReviewRegistry<ResourceReplaceReview>();
   const resourceRemoveReviews = new LifecycleReviewRegistry<ResourceRemoveReview>();
+  const sessionEmergencyReviews = new LifecycleReviewRegistry<SessionEmergencyReview>();
   const server = createServer(async (req, res) => {
     const address = server.address() as AddressInfo | null;
     const origin = `http://${OWNER_CONSOLE_HOST}:${address?.port ?? OWNER_CONSOLE_DEFAULT_PORT}`;
@@ -454,7 +466,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_TARGET_BINDING_JS}\n${LEGACY_VIDEO_BIND_CREATE_ONLY_CLIENT_JS}\n${ACCESS_CODE_CLIENT_JS}\n${ACCESS_CODE_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
+          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${SESSION_EMERGENCY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_TARGET_BINDING_JS}\n${LEGACY_VIDEO_BIND_CREATE_ONLY_CLIENT_JS}\n${ACCESS_CODE_CLIENT_JS}\n${ACCESS_CODE_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
@@ -573,6 +585,30 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         )
           return fail(res, 415);
         const input = await body(req);
+        if (url.pathname === "/api/sessions/emergency/review") {
+          exactInput(input, ["courseId", "moduleId", "sessionId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const review = await reviewEmergency(deps.db, {
+            courseId: validateCourseId(input.courseId),
+            moduleId: validateCourseId(input.moduleId),
+            sessionId: validateCourseId(input.sessionId),
+          }, now());
+          const reviewId = randomBytes(24).toString("base64url");
+          sessionEmergencyReviews.add(reviewId, review);
+          return send(res, 200, { reviewId, review: review.safe });
+        }
+        if (url.pathname === "/api/sessions/emergency/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          if (requiredString(input.confirmation) !== SESSION_EMERGENCY_CONFIRMATION) return fail(res, 400);
+          const result = await runLifecycleReview(
+            sessionEmergencyReviews,
+            requiredString(input.reviewId),
+            (review) => applyEmergency(deps.db, review, now()),
+          );
+          if (!result) return fail(res, 409);
+          return send(res, 200, { result });
+        }
         if (url.pathname === "/api/protected-content/session/inventory") {
           exactInput(input, ["courseId", "moduleId", "sessionId"]);
           await authorize(deps.auth, deps.ownerUid);
