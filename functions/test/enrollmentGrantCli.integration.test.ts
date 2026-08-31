@@ -12,6 +12,13 @@ import {
   resolveEnrollmentGrantProject,
   runEnrollmentGrantCliService,
 } from "../src/tooling/enrollmentGrant.js";
+import {
+  applyEnrollmentReview,
+  inspectEnrollment,
+  readEnrollmentInventory,
+  reviewEnrollmentExtension,
+  reviewEnrollmentStatus,
+} from "../src/ownerConsole/enrollmentManagement.js";
 
 const PROJECT_ID = "demo-at-in-physics";
 const NOW = new Date("2029-01-01T00:00:00.000Z");
@@ -279,4 +286,125 @@ test("non-owner trusted UID is rejected before Firestore mutation", async () => 
     /does not have owner authority/,
   );
   assert.equal((await reference(targetUid, courseId).get()).exists, false);
+});
+
+test("Enrollment Management revokes, extends, and reactivates with exact isolated writes", async () => {
+  const courseId = "managed-course";
+  await course(courseId);
+  const enrollmentRef = reference(targetUid, courseId);
+  const accessCodeRef = db.doc(`accessCodes/${"a".repeat(64)}`);
+  const sessionRef = db.doc(`courses/${courseId}/modules/basics/sessions/intro`);
+  const isolated = [
+    db.doc(`courses/${courseId}/modules/basics`),
+    sessionRef,
+    db.doc(`courses/${courseId}/modules/basics/sessionDiscovery/visible`),
+    db.doc(`courses/${courseId}/modules/basics/sessionDiscovery/free`),
+    accessCodeRef,
+    db.doc(`courses/${courseId}/resources/notes`),
+    db.doc(`courses/${courseId}/resources/notes/access/primary`),
+    sessionRef.collection("videoAccess").doc("primary"),
+    reference(otherUid, courseId),
+  ];
+  await Promise.all(isolated.map((item, index) => item.set({ preserved: index })));
+  const original = {
+    userId: targetUid,
+    courseId,
+    status: "active",
+    grantedAt: Timestamp.fromDate(NOW),
+    expiresAt: Timestamp.fromDate(new Date("2030-01-01T00:00:00.000Z")),
+    source: "access_code",
+    sourceId: "a".repeat(64),
+    grantedBy: "access-code-service",
+  };
+  await enrollmentRef.set(original);
+  const isolatedBefore = await db.getAll(...isolated);
+
+  const revoke = await reviewEnrollmentStatus(db, { userId: targetUid, courseId }, "revoke", NOW);
+  const beforeReview = await enrollmentRef.get();
+  assert.equal((await enrollmentRef.get()).updateTime?.isEqual(beforeReview.updateTime!), true);
+  await applyEnrollmentReview(db, revoke, NOW);
+  assert.deepEqual((await enrollmentRef.get()).data(), { ...original, status: "revoked" });
+  await assert.rejects(applyEnrollmentReview(db, revoke, NOW), /changed after review/);
+
+  const extend = await reviewEnrollmentExtension(db, { userId: targetUid, courseId }, "2031-01-01T00:00:00.000Z", NOW);
+  await applyEnrollmentReview(db, extend, NOW);
+  const extended = (await enrollmentRef.get()).data()!;
+  assert.equal(extended.status, "revoked");
+  assert.equal(extended.expiresAt.toDate().toISOString(), "2031-01-01T00:00:00.000Z");
+
+  const reactivate = await reviewEnrollmentStatus(db, { userId: targetUid, courseId }, "reactivate", NOW);
+  await applyEnrollmentReview(db, reactivate, NOW);
+  const reactivated = (await enrollmentRef.get()).data()!;
+  assert.equal(reactivated.status, "active");
+  assert.equal(reactivated.sourceId, original.sourceId);
+  assert.equal(reactivated.grantedBy, original.grantedBy);
+  assert.equal(reactivated.grantedAt.isEqual(original.grantedAt), true);
+  assert.deepEqual((await accessCodeRef.get()).data(), { preserved: 4 });
+  const isolatedAfter = await db.getAll(...isolated);
+  isolatedAfter.forEach((snapshot, index) => {
+    assert.deepEqual(snapshot.data(), isolatedBefore[index]!.data());
+    assert.equal(snapshot.updateTime?.isEqual(isolatedBefore[index]!.updateTime!), true);
+  });
+});
+
+test("Enrollment Management fails closed for invalid states, expirations, stale reviews, and malformed records", async () => {
+  const courseId = "managed-failures";
+  await course(courseId);
+  const enrollmentRef = reference(targetUid, courseId);
+  const finite = {
+    userId: targetUid,
+    courseId,
+    status: "active",
+    grantedAt: Timestamp.fromDate(NOW),
+    expiresAt: Timestamp.fromDate(new Date("2030-01-01T00:00:00.000Z")),
+    source: "manual",
+    grantedBy: ownerUid,
+  };
+  await enrollmentRef.set(finite);
+  await assert.rejects(reviewEnrollmentStatus(db, { userId: targetUid, courseId }, "reactivate", NOW), /not eligible/);
+  const stale = await reviewEnrollmentStatus(db, { userId: targetUid, courseId }, "revoke", NOW);
+  await enrollmentRef.update({ expiresAt: Timestamp.fromDate(new Date("2030-06-01T00:00:00.000Z")) });
+  await assert.rejects(applyEnrollmentReview(db, stale, NOW), /changed after review/);
+  for (const value of ["bad", "2028-01-01T00:00:00.000Z", "2030-01-01T00:00:00.000Z"]) {
+    await assert.rejects(reviewEnrollmentExtension(db, { userId: targetUid, courseId }, value, NOW));
+  }
+  await enrollmentRef.update({ expiresAt: null });
+  await assert.rejects(reviewEnrollmentExtension(db, { userId: targetUid, courseId }, "2032-01-01T00:00:00.000Z", NOW), /perpetual/);
+  await enrollmentRef.update({ status: "revoked", expiresAt: Timestamp.fromDate(new Date("2028-01-01T00:00:00.000Z")) });
+  await assert.rejects(reviewEnrollmentStatus(db, { userId: targetUid, courseId }, "reactivate", NOW), /extended/);
+  await assert.rejects(reviewEnrollmentStatus(db, { userId: targetUid, courseId: "missing-managed" }, "revoke", NOW), /not found/);
+  await enrollmentRef.set({ ...finite, extra: true });
+  await assert.rejects(inspectEnrollment(db, { userId: targetUid, courseId }, NOW), /malformed/);
+});
+
+test("Enrollment inventory is bounded, deterministic, classified, and sanitized", async () => {
+  const courseId = "managed-inventory";
+  await course(courseId);
+  const batch = db.batch();
+  for (let index = 0; index < 251; index += 1) {
+    const uid = `inventory-user-${String(index).padStart(3, "0")}`;
+    batch.set(reference(uid, courseId), {
+      userId: uid,
+      courseId,
+      status: index === 0 ? "revoked" : "active",
+      grantedAt: Timestamp.fromDate(NOW),
+      expiresAt: index === 1 ? Timestamp.fromDate(new Date("2028-01-01T00:00:00.000Z")) : null,
+      source: "manual",
+      grantedBy: ownerUid,
+    });
+  }
+  await batch.commit();
+  const result = await readEnrollmentInventory(db, NOW);
+  assert.equal(result.enrollments.length <= 250, true);
+  assert.equal(result.limit, 250);
+  assert.equal(result.limitReached, true);
+  assert.deepEqual([...result.enrollments].map((item) => `${item.userId}_${item.courseId}`), [...result.enrollments].map((item) => `${item.userId}_${item.courseId}`).sort());
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes("grantedBy"), false);
+  assert.equal(serialized.includes("sourceId"), false);
+  assert.equal(serialized.includes("revision"), false);
+  const revoked = await inspectEnrollment(db, { userId: "inventory-user-000", courseId }, NOW);
+  const expired = await inspectEnrollment(db, { userId: "inventory-user-001", courseId }, NOW);
+  assert.equal(revoked.accessState, "revoked");
+  assert.equal(expired.accessState, "expired");
 });

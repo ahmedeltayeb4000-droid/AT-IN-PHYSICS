@@ -27,6 +27,7 @@ import {
 } from "../src/ownerConsole/videoPreparation.js";
 import { ACCESS_CODE_CLIENT_JS } from "../src/ownerConsole/accessCodeClient.js";
 import type { CoursePublicationReview } from "../src/ownerConsole/coursePublication.js";
+import type { EnrollmentReview } from "../src/ownerConsole/enrollmentManagement.js";
 
 const course = (id: string, title = "Course") => ({
   id,
@@ -294,6 +295,91 @@ test("trusted Course publication requires confirmation, preserves failed review,
     assert.match(script, /Review Course Publication/);
     assert.match(script, /status!==['"]draft['"]/);
     assert.equal(authorized, 6);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("Enrollment Management inventory and exact review/apply routes are authorized, sanitized, and one-time", async () => {
+  let authorized = 0;
+  let applies = 0;
+  const enrollment = {
+    userId: "student",
+    courseId: "mechanics",
+    status: "active" as const,
+    grantedAt: Timestamp.fromMillis(1_000),
+    expiresAt: Timestamp.fromMillis(4_102_444_800_000),
+    source: "manual" as const,
+    grantedBy: "secret-owner",
+  };
+  const reviewed = (operation: EnrollmentReview["operation"]): EnrollmentReview => ({
+    operation,
+    target: { userId: "student", courseId: "mechanics" },
+    current: { ...enrollment, status: operation === "reactivate" ? "revoked" : "active" },
+    proposedStatus: operation === "revoke" ? "revoked" : "active",
+    proposedExpiresAt: operation === "extend" ? Timestamp.fromMillis(4_133_980_800_000) : enrollment.expiresAt,
+    revisionMillis: 99,
+  });
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: {} as Firestore,
+    ownerUid: "secret-owner",
+    projectId: "demo-at-in-physics",
+    now: () => new Date("2030-01-01T00:00:00.000Z"),
+    authorize: async () => { authorized += 1; },
+    readEnrollmentInventory: async () => ({
+      enrollments: [{ userId: "student", courseId: "mechanics", courseTitle: "Mechanics", status: "active", accessState: "active", grantedAt: "1970-01-01T00:00:01.000Z", expiresAt: "2100-01-01T00:00:00.000Z", source: "manual" }],
+      limit: 250,
+      limitReached: false,
+      malformedCount: 0,
+    }),
+    inspectEnrollment: async () => ({ userId: "student", courseId: "mechanics", courseTitle: "Mechanics", status: "active", accessState: "active", grantedAt: "1970-01-01T00:00:01.000Z", expiresAt: "2100-01-01T00:00:00.000Z", source: "manual" }),
+    reviewEnrollmentStatus: async (_db, _target, operation) => reviewed(operation),
+    reviewEnrollmentExtension: async () => reviewed("extend"),
+    applyEnrollmentReview: async (_db, review) => {
+      applies += 1;
+      return { operation: review.operation, enrollment: { userId: "student", courseId: "mechanics", courseTitle: null, status: review.proposedStatus, accessState: review.proposedStatus === "revoked" ? "revoked" : "active", grantedAt: "1970-01-01T00:00:01.000Z", expiresAt: review.proposedExpiresAt?.toDate().toISOString() ?? null, source: "manual" }, verified: true };
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const post = (path: string, value: unknown, headers: Record<string, string> = {}) => fetch(origin + path, { method: "POST", headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests, ...headers }, body: JSON.stringify(value) });
+  try {
+    const inventory = await post("/api/enrollments/inventory", {});
+    assert.equal(inventory.status, 200);
+    const inventoryText = await inventory.text();
+    assert.equal(inventoryText.includes("secret-owner"), false);
+    assert.equal(inventoryText.includes("sourceId"), false);
+    assert.equal(inventoryText.includes("revision"), false);
+    assert.equal(inventory.headers.get("access-control-allow-origin"), null);
+    assert.equal((await post("/api/enrollments/inventory", { extra: true })).status, 400);
+    assert.equal((await post("/api/enrollments/inspect", { userId: "student", courseId: "mechanics" })).status, 200);
+    assert.equal((await post("/api/enrollments/inspect", { userId: "student", courseId: "mechanics", status: "active" })).status, 400);
+
+    for (const [operation, confirmation, body] of [
+      ["revoke", "REVOKE ENROLLMENT", { userId: "student", courseId: "mechanics" }],
+      ["reactivate", "REACTIVATE ENROLLMENT", { userId: "student", courseId: "mechanics" }],
+      ["extend", "EXTEND ENROLLMENT", { userId: "student", courseId: "mechanics", expiresAt: "2101-01-01T00:00:00.000Z" }],
+    ] as const) {
+      const response = await post(`/api/enrollments/${operation}/review`, body);
+      assert.equal(response.status, 200);
+      const value = await response.json() as { reviewId: string; review: unknown };
+      const safe = JSON.stringify(value);
+      assert.equal(safe.includes("revisionMillis"), false);
+      assert.equal(safe.includes("grantedBy"), false);
+      assert.equal(safe.includes("sourceId"), false);
+      assert.equal((await post(`/api/enrollments/${operation}/apply`, { reviewId: value.reviewId, confirmation: "WRONG" })).status, 400);
+      assert.equal((await post(`/api/enrollments/${operation}/apply`, { reviewId: value.reviewId, confirmation })).status, 200);
+      assert.equal((await post(`/api/enrollments/${operation}/apply`, { reviewId: value.reviewId, confirmation })).status, 409);
+    }
+    assert.equal(applies, 3);
+    assert.equal((await post("/api/enrollments/inventory", {}, { origin: "http://example.test" })).status, 403);
+    assert.equal((await post("/api/enrollments/inventory", {}, { "x-owner-control-csrf": "wrong" })).status, 403);
+    const script = await (await fetch(origin + "/app.js")).text();
+    assert.doesNotThrow(() => new Script(script));
+    assert.match(script, /Enrollment Management/);
+    assert.match(script, /REVOKE ENROLLMENT/);
+    assert.equal(authorized, 14);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

@@ -180,6 +180,51 @@ after(async () => {
   await testEnvironment.cleanup();
 });
 
+test("Enrollment management lifecycle preserves active, revoked, extended, and reactivated authorization", async () => {
+  const enrollmentPath = `enrollments/${CURRENT_UID}_mechanics`;
+  await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
+    "courses/mechanics/modules/motion": { title: "Motion", order: 0 },
+    [VIDEO_SESSION_PATH]: videoSession(),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [COURSE_RESOURCE_PATH]: protectedResourceMetadata("course"),
+    [COURSE_RESOURCE_ACCESS_PATH]: protectedResourceAccess(),
+    [SESSION_RESOURCE_PATH]: protectedResourceMetadata("session"),
+    [SESSION_RESOURCE_ACCESS_PATH]: protectedResourceAccess(),
+    [enrollmentPath]: enrollment(CURRENT_UID, "mechanics", {
+      grantedAt: Timestamp.fromMillis(1_000),
+      expiresAt: Timestamp.fromDate(new Date("2099-01-01T00:00:00.000Z")),
+    }),
+  });
+  const student = authenticatedDb(CURRENT_UID);
+  const protectedPaths = [
+    VIDEO_SESSION_PATH,
+    VIDEO_ACCESS_PATH,
+    COURSE_RESOURCE_PATH,
+    COURSE_RESOURCE_ACCESS_PATH,
+    SESSION_RESOURCE_PATH,
+    SESSION_RESOURCE_ACCESS_PATH,
+  ];
+  for (const path of protectedPaths) await assertSucceeds(getDoc(doc(student, path)));
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), enrollmentPath), { status: "revoked" });
+  });
+  for (const path of protectedPaths) await assertFails(getDoc(doc(student, path)));
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), enrollmentPath), {
+      expiresAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")),
+    });
+  });
+  for (const path of protectedPaths) await assertFails(getDoc(doc(student, path)));
+  await testEnvironment.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(doc(context.firestore(), enrollmentPath), { status: "active" });
+  });
+  for (const path of protectedPaths) await assertSucceeds(getDoc(doc(student, path)));
+  await assertFails(updateDoc(doc(student, enrollmentPath), { status: "revoked" }));
+  await assertFails(updateDoc(doc(student, enrollmentPath), { expiresAt: Timestamp.fromDate(new Date("2101-01-01T00:00:00.000Z")) }));
+  await assertFails(updateDoc(doc(ownerDb(), enrollmentPath), { status: "revoked" }));
+});
+
 test("unauthenticated user cannot get an Enrollment", async () => {
   await seedDocuments({
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),

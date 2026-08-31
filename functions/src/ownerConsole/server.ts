@@ -107,6 +107,19 @@ import {
   type CoursePublicationReview,
 } from "./coursePublication.js";
 import { COURSE_PUBLICATION_CLIENT_JS } from "./coursePublicationClient.js";
+import {
+  applyEnrollmentReview,
+  inspectEnrollment,
+  readEnrollmentInventory,
+  reviewEnrollmentExtension,
+  reviewEnrollmentStatus,
+  safeEnrollmentReview,
+  EXTEND_ENROLLMENT_CONFIRMATION,
+  REACTIVATE_ENROLLMENT_CONFIRMATION,
+  REVOKE_ENROLLMENT_CONFIRMATION,
+  type EnrollmentReview,
+} from "./enrollmentManagement.js";
+import { ENROLLMENT_MANAGEMENT_CLIENT_JS } from "./enrollmentManagementClient.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -154,6 +167,11 @@ export type OwnerConsoleDependencies = Readonly<{
   applyFreeStatus?: typeof applySessionFreeStatus;
   reviewCoursePublication?: typeof reviewCoursePublication;
   applyCoursePublication?: typeof applyCoursePublication;
+  readEnrollmentInventory?: typeof readEnrollmentInventory;
+  inspectEnrollment?: typeof inspectEnrollment;
+  reviewEnrollmentStatus?: typeof reviewEnrollmentStatus;
+  reviewEnrollmentExtension?: typeof reviewEnrollmentExtension;
+  applyEnrollmentReview?: typeof applyEnrollmentReview;
 }>;
 
 type Review = {
@@ -317,11 +335,17 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const applyFreeStatus = deps.applyFreeStatus ?? applySessionFreeStatus;
   const reviewCourse = deps.reviewCoursePublication ?? reviewCoursePublication;
   const applyCourse = deps.applyCoursePublication ?? applyCoursePublication;
+  const readEnrollments = deps.readEnrollmentInventory ?? readEnrollmentInventory;
+  const inspectManagedEnrollment = deps.inspectEnrollment ?? inspectEnrollment;
+  const reviewEnrollmentState = deps.reviewEnrollmentStatus ?? reviewEnrollmentStatus;
+  const reviewEnrollmentExpiry = deps.reviewEnrollmentExtension ?? reviewEnrollmentExtension;
+  const applyManagedEnrollment = deps.applyEnrollmentReview ?? applyEnrollmentReview;
   const freeStatusReviews = new Map<string, { review: SessionFreeStatusReview; used: boolean }>();
   const coursePublicationReviews = new Map<
     string,
     { review: CoursePublicationReview; used: boolean }
   >();
+  const enrollmentReviews = new Map<string, { review: EnrollmentReview; used: boolean }>();
   const preparedVideos = new Map<string, OwnerPreparedVideo>();
   const videoReleases = new Map<string, OwnerReleaseReview>();
   const preflightedVideoReleases = new Set<string>();
@@ -366,7 +390,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}`,
+          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
@@ -628,6 +652,103 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           try {
             const result = await applyFreeStatus(deps.db, record.review, now());
             freeStatusReviews.delete(reviewId);
+            return send(res, 200, { result });
+          } catch (error) {
+            record.used = false;
+            throw error;
+          }
+        }
+        if (url.pathname === "/api/enrollments/inventory") {
+          exactInput(input, []);
+          await authorize(deps.auth, deps.ownerUid);
+          return send(res, 200, await readEnrollments(deps.db, now()));
+        }
+        if (url.pathname === "/api/enrollments/inspect") {
+          exactInput(input, ["userId", "courseId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const enrollment = await inspectManagedEnrollment(
+            deps.db,
+            {
+              userId: requiredString(input.userId),
+              courseId: validateCourseId(input.courseId),
+            },
+            now(),
+          );
+          return send(res, 200, { enrollment });
+        }
+        if (
+          url.pathname === "/api/enrollments/revoke/review" ||
+          url.pathname === "/api/enrollments/reactivate/review" ||
+          url.pathname === "/api/enrollments/extend/review"
+        ) {
+          const operation = url.pathname.includes("/revoke/")
+            ? "revoke"
+            : url.pathname.includes("/reactivate/")
+              ? "reactivate"
+              : "extend";
+          exactInput(
+            input,
+            operation === "extend"
+              ? ["userId", "courseId", "expiresAt"]
+              : ["userId", "courseId"],
+          );
+          await authorize(deps.auth, deps.ownerUid);
+          const selected = {
+            userId: requiredString(input.userId),
+            courseId: validateCourseId(input.courseId),
+          };
+          const review =
+            operation === "extend"
+              ? await reviewEnrollmentExpiry(
+                  deps.db,
+                  selected,
+                  input.expiresAt,
+                  now(),
+                )
+              : await reviewEnrollmentState(
+                  deps.db,
+                  selected,
+                  operation,
+                  now(),
+                );
+          const reviewId = randomBytes(24).toString("base64url");
+          enrollmentReviews.set(reviewId, { review, used: false });
+          return send(res, 200, {
+            reviewId,
+            review: safeEnrollmentReview(review, now()),
+          });
+        }
+        if (
+          url.pathname === "/api/enrollments/revoke/apply" ||
+          url.pathname === "/api/enrollments/reactivate/apply" ||
+          url.pathname === "/api/enrollments/extend/apply"
+        ) {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const operation = url.pathname.includes("/revoke/")
+            ? "revoke"
+            : url.pathname.includes("/reactivate/")
+              ? "reactivate"
+              : "extend";
+          const confirmation =
+            operation === "revoke"
+              ? REVOKE_ENROLLMENT_CONFIRMATION
+              : operation === "reactivate"
+                ? REACTIVATE_ENROLLMENT_CONFIRMATION
+                : EXTEND_ENROLLMENT_CONFIRMATION;
+          const reviewId = requiredString(input.reviewId);
+          const record = enrollmentReviews.get(reviewId);
+          if (!record || record.used || record.review.operation !== operation)
+            return fail(res, 409);
+          if (input.confirmation !== confirmation) return fail(res, 400);
+          record.used = true;
+          try {
+            const result = await applyManagedEnrollment(
+              deps.db,
+              record.review,
+              now(),
+            );
+            enrollmentReviews.delete(reviewId);
             return send(res, 200, { result });
           } catch (error) {
             record.used = false;
