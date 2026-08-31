@@ -89,18 +89,38 @@ async function seedTarget(overrides = {}) {
   });
 }
 
-async function redeem(studentDb, uid, accessCodeId = CODE_ID) {
+async function redeem(studentDb, uid, accessCodeId = CODE_ID, afterRead = async () => {}) {
+  let firstRead = true;
   return runTransaction(studentDb, async (transaction) => {
     const codeReference = doc(studentDb, "accessCodes", accessCodeId);
     const codeSnapshot = await transaction.get(codeReference);
     const courseId = codeSnapshot.data().courseId;
     const enrollmentReference = doc(studentDb, "enrollments", `${uid}_${courseId}`);
     const enrollmentSnapshot = await transaction.get(enrollmentReference);
+    if (firstRead) {
+      firstRead = false;
+      await afterRead();
+    }
     if (codeSnapshot.data().status === "redeemed" && codeSnapshot.data().redeemedBy === uid && enrollmentSnapshot.exists()) return "already-redeemed-by-you";
     transaction.update(codeReference, { status: "redeemed", redeemedBy: uid, redeemedAt: serverTimestamp() });
     transaction.set(enrollmentReference, enrollment(uid, accessCodeId));
     return "created";
   });
+}
+
+async function trustedRevoke(accessCodeId = CODE_ID, afterRead = async () => {}) {
+  let firstRead = true;
+  return environment.withSecurityRulesDisabled(async (context) => runTransaction(context.firestore(), async (transaction) => {
+    const reference = doc(context.firestore(), "accessCodes", accessCodeId);
+    const snapshot = await transaction.get(reference);
+    if (firstRead) {
+      firstRead = false;
+      await afterRead();
+    }
+    const data = snapshot.data();
+    if (!snapshot.exists() || data.status !== "active" || data.redeemedBy !== null || data.redeemedAt !== null || (data.expiresAt !== null && data.expiresAt.toMillis() <= Date.now())) throw new Error("not revocable");
+    transaction.update(reference, { status: "revoked" });
+  }));
 }
 
 before(async () => {
@@ -213,6 +233,51 @@ test("two concurrent students racing one code produce exactly one winner", async
     enrollmentCount = (await getDocs(collection(context.firestore(), "enrollments"))).size;
   });
   assert.equal(enrollmentCount, 1);
+});
+
+test("redemption winning the owner-revoke race leaves one exact redeemed pair", async () => {
+  await seedTarget();
+  let releaseOwner;
+  let ownerRead;
+  const ownerReadPromise = new Promise((resolve) => { ownerRead = resolve; });
+  const ownerGate = new Promise((resolve) => { releaseOwner = resolve; });
+  const ownerOutcome = trustedRevoke(CODE_ID, async () => {
+    ownerRead();
+    await ownerGate;
+  });
+  await ownerReadPromise;
+  assert.equal(await redeem(db("student-a"), "student-a"), "created");
+  releaseOwner();
+  await assert.rejects(ownerOutcome);
+  const codeSnapshot = await getDoc(doc(db("student-a"), "accessCodes", CODE_ID));
+  assert.equal(codeSnapshot.data().status, "redeemed");
+  assert.equal((await getDoc(doc(db("student-a"), "enrollments", `student-a_${COURSE_ID}`))).exists(), true);
+});
+
+test("owner revocation winning the race creates no Enrollment and cannot be reopened", async () => {
+  await seedTarget();
+  let releaseStudent;
+  let studentRead;
+  const studentReadPromise = new Promise((resolve) => { studentRead = resolve; });
+  const studentGate = new Promise((resolve) => { releaseStudent = resolve; });
+  const redemptionOutcome = redeem(db("student-a"), "student-a", CODE_ID, async () => {
+    studentRead();
+    await studentGate;
+  });
+  await studentReadPromise;
+  await trustedRevoke();
+  releaseStudent();
+  await assert.rejects(redemptionOutcome);
+  let trustedCode;
+  let enrollmentExists;
+  await environment.withSecurityRulesDisabled(async (context) => {
+    trustedCode = (await getDoc(doc(context.firestore(), "accessCodes", CODE_ID))).data();
+    enrollmentExists = (await getDoc(doc(context.firestore(), "enrollments", `student-a_${COURSE_ID}`))).exists();
+  });
+  assert.equal(trustedCode.status, "revoked");
+  assert.equal(enrollmentExists, false);
+  await assertFails(getDoc(doc(db("student-a"), "accessCodes", CODE_ID)));
+  await assertFails(updateDoc(doc(db("student-a"), "accessCodes", CODE_ID), { status: "active" }));
 });
 
 test("same student retry is read-only and another student cannot inspect or reuse it", async () => {

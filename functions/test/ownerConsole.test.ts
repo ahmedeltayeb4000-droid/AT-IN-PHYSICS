@@ -28,6 +28,7 @@ import {
 import { ACCESS_CODE_CLIENT_JS } from "../src/ownerConsole/accessCodeClient.js";
 import type { CoursePublicationReview } from "../src/ownerConsole/coursePublication.js";
 import type { EnrollmentReview } from "../src/ownerConsole/enrollmentManagement.js";
+import type { AccessCodeReview } from "../src/ownerConsole/accessCodeManagement.js";
 
 const course = (id: string, title = "Course") => ({
   id,
@@ -485,6 +486,99 @@ test("Access Code generation endpoint preserves owner authority and exact input"
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { accessCode: { code: "[REDACTED]", courseId: "future-course", expiresAt: null } });
     assert.equal(calls, 1);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("Access Code Management uses opaque bounded state, exact routes, and one-time revocation", async () => {
+  let inventoryVersion = 0;
+  let applied = 0;
+  let permitted = false;
+  const hash = "a".repeat(64);
+  const accessCode = {
+    version: 1 as const,
+    courseId: "mechanics",
+    status: "active" as const,
+    createdAt: Timestamp.fromMillis(1_000),
+    expiresAt: Timestamp.fromMillis(4_102_444_800_000),
+    redeemedBy: null,
+    redeemedAt: null,
+  };
+  const review: AccessCodeReview = { documentId: hash, current: accessCode, revisionMillis: 7 };
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: {} as Firestore,
+    ownerUid: "trusted-owner",
+    projectId: "demo-at-in-physics",
+    now: () => new Date("2030-01-01T00:00:00.000Z"),
+    authorize: async () => { if (!permitted) throw new Error("denied"); },
+    readAccessCodeInventory: async () => {
+      inventoryVersion += 1;
+      const handle = `opaque-${inventoryVersion}`;
+      return {
+        response: {
+          accessCodes: [{ handle, courseId: "mechanics", courseTitle: "Mechanics", state: "unused" as const, createdAt: "1970-01-01T00:00:01.000Z", expiresAt: "2100-01-01T00:00:00.000Z", redeemedAt: null }],
+          limit: 250,
+          limitReached: false,
+          malformedCount: 0,
+        },
+        handles: new Map([[handle, hash]]),
+      };
+    },
+    inspectAccessCode: async (_db, documentId) => {
+      assert.equal(documentId, hash);
+      return { courseId: "mechanics", courseTitle: "Mechanics", state: "unused" as const, createdAt: "1970-01-01T00:00:01.000Z", expiresAt: "2100-01-01T00:00:00.000Z", redeemedAt: null };
+    },
+    reviewAccessCodeRevocation: async (_db, documentId) => {
+      assert.equal(documentId, hash);
+      return review;
+    },
+    applyAccessCodeRevocation: async (_db, received) => {
+      assert.deepEqual(received, review);
+      applied += 1;
+      return { state: "revoked" as const, verified: true as const };
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const post = (path: string, body: unknown, headers: Record<string, string> = {}) => fetch(origin + path, {
+    method: "POST",
+    headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests, ...headers },
+    body: JSON.stringify(body),
+  });
+  try {
+    assert.equal((await post("/api/access-codes/inventory", {})).status, 400);
+    permitted = true;
+    const firstInventory = await (await post("/api/access-codes/inventory", {})).json() as { accessCodes: Array<{ handle: string }> };
+    const firstHandle = firstInventory.accessCodes[0]!.handle;
+    assert.equal(JSON.stringify(firstInventory).includes(hash), false);
+    assert.equal((await post("/api/access-codes/inspect", { handle: firstHandle, courseId: "mechanics" })).status, 400);
+    assert.equal((await post("/api/access-codes/inspect", { handle: firstHandle })).status, 200);
+    const secondInventory = await (await post("/api/access-codes/inventory", {})).json() as { accessCodes: Array<{ handle: string }> };
+    assert.equal((await post("/api/access-codes/inspect", { handle: firstHandle })).status, 409);
+    const currentHandle = secondInventory.accessCodes[0]!.handle;
+    const reviewIds: string[] = [];
+    for (let index = 0; index < 251; index += 1) {
+      const response = await post("/api/access-codes/revoke/review", { handle: currentHandle });
+      assert.equal(response.status, 200);
+      const value = await response.json() as { reviewId: string; review: unknown };
+      assert.equal(JSON.stringify(value).includes(hash), false);
+      assert.equal(JSON.stringify(value).includes("revision"), false);
+      assert.equal(JSON.stringify(value).includes("redeemedBy"), false);
+      reviewIds.push(value.reviewId);
+    }
+    assert.equal((await post("/api/access-codes/revoke/apply", { reviewId: reviewIds[0], confirmation: "REVOKE ACCESS CODE" })).status, 409);
+    const lastReviewId = reviewIds.at(-1)!;
+    assert.equal((await post("/api/access-codes/revoke/apply", { reviewId: lastReviewId, confirmation: "WRONG" })).status, 400);
+    assert.equal((await post("/api/access-codes/revoke/apply", { reviewId: lastReviewId, confirmation: "REVOKE ACCESS CODE" })).status, 200);
+    assert.equal((await post("/api/access-codes/revoke/apply", { reviewId: lastReviewId, confirmation: "REVOKE ACCESS CODE" })).status, 409);
+    assert.equal(applied, 1);
+    assert.equal((await post("/api/access-codes/inventory", {}, { origin: "http://example.test" })).status, 403);
+    assert.equal((await post("/api/access-codes/inventory", {}, { "x-owner-control-csrf": "wrong" })).status, 403);
+    const script = await (await fetch(origin + "/app.js")).text();
+    assert.doesNotThrow(() => new Script(script));
+    assert.match(script, /REVOKE ACCESS CODE/);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

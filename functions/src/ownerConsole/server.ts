@@ -120,6 +120,18 @@ import {
   type EnrollmentReview,
 } from "./enrollmentManagement.js";
 import { ENROLLMENT_MANAGEMENT_CLIENT_JS } from "./enrollmentManagementClient.js";
+import {
+  ACCESS_CODE_REVIEW_LIMIT,
+  applyAccessCodeRevocation,
+  inspectAccessCode,
+  readAccessCodeInventory,
+  REVOKE_ACCESS_CODE_CONFIRMATION,
+  reviewAccessCodeRevocation,
+  safeAccessCodeReview,
+  type AccessCodeHandleRegistry,
+  type AccessCodeReview,
+} from "./accessCodeManagement.js";
+import { ACCESS_CODE_MANAGEMENT_CLIENT_JS } from "./accessCodeManagementClient.js";
 
 export const OWNER_CONSOLE_HOST = "127.0.0.1";
 export const OWNER_CONSOLE_DEFAULT_PORT = 4317;
@@ -172,6 +184,10 @@ export type OwnerConsoleDependencies = Readonly<{
   reviewEnrollmentStatus?: typeof reviewEnrollmentStatus;
   reviewEnrollmentExtension?: typeof reviewEnrollmentExtension;
   applyEnrollmentReview?: typeof applyEnrollmentReview;
+  readAccessCodeInventory?: typeof readAccessCodeInventory;
+  inspectAccessCode?: typeof inspectAccessCode;
+  reviewAccessCodeRevocation?: typeof reviewAccessCodeRevocation;
+  applyAccessCodeRevocation?: typeof applyAccessCodeRevocation;
 }>;
 
 type Review = {
@@ -340,12 +356,18 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const reviewEnrollmentState = deps.reviewEnrollmentStatus ?? reviewEnrollmentStatus;
   const reviewEnrollmentExpiry = deps.reviewEnrollmentExtension ?? reviewEnrollmentExtension;
   const applyManagedEnrollment = deps.applyEnrollmentReview ?? applyEnrollmentReview;
+  const readManagedAccessCodes = deps.readAccessCodeInventory ?? readAccessCodeInventory;
+  const inspectManagedAccessCode = deps.inspectAccessCode ?? inspectAccessCode;
+  const reviewManagedAccessCode = deps.reviewAccessCodeRevocation ?? reviewAccessCodeRevocation;
+  const applyManagedAccessCode = deps.applyAccessCodeRevocation ?? applyAccessCodeRevocation;
   const freeStatusReviews = new Map<string, { review: SessionFreeStatusReview; used: boolean }>();
   const coursePublicationReviews = new Map<
     string,
     { review: CoursePublicationReview; used: boolean }
   >();
   const enrollmentReviews = new Map<string, { review: EnrollmentReview; used: boolean }>();
+  const accessCodeHandles: AccessCodeHandleRegistry = new Map();
+  const accessCodeReviews = new Map<string, { review: AccessCodeReview; used: boolean }>();
   const preparedVideos = new Map<string, OwnerPreparedVideo>();
   const videoReleases = new Map<string, OwnerReleaseReview>();
   const preflightedVideoReleases = new Set<string>();
@@ -390,7 +412,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
+          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${ACCESS_CODE_CLIENT_JS}\n${ACCESS_CODE_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
@@ -765,6 +787,59 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
             now(),
           );
           return send(res, 200, { accessCode: result });
+        }
+        if (url.pathname === "/api/access-codes/inventory") {
+          exactInput(input, []);
+          await authorize(deps.auth, deps.ownerUid);
+          const inventory = await readManagedAccessCodes(deps.db, now());
+          accessCodeHandles.clear();
+          for (const [handle, documentId] of inventory.handles) accessCodeHandles.set(handle, documentId);
+          return send(res, 200, inventory.response);
+        }
+        if (url.pathname === "/api/access-codes/inspect") {
+          exactInput(input, ["handle"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const documentId = accessCodeHandles.get(requiredString(input.handle));
+          if (!documentId) return fail(res, 409);
+          return send(res, 200, {
+            accessCode: await inspectManagedAccessCode(deps.db, documentId, now()),
+          });
+        }
+        if (url.pathname === "/api/access-codes/revoke/review") {
+          exactInput(input, ["handle"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const documentId = accessCodeHandles.get(requiredString(input.handle));
+          if (!documentId) return fail(res, 409);
+          const review = await reviewManagedAccessCode(deps.db, documentId, now());
+          if (accessCodeReviews.size >= ACCESS_CODE_REVIEW_LIMIT) {
+            for (const [existingId, existing] of accessCodeReviews) {
+              if (!existing.used) {
+                accessCodeReviews.delete(existingId);
+                break;
+              }
+            }
+          }
+          if (accessCodeReviews.size >= ACCESS_CODE_REVIEW_LIMIT) return fail(res, 409);
+          const reviewId = randomBytes(24).toString("base64url");
+          accessCodeReviews.set(reviewId, { review, used: false });
+          return send(res, 200, { reviewId, review: safeAccessCodeReview(review, now()) });
+        }
+        if (url.pathname === "/api/access-codes/revoke/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const reviewId = requiredString(input.reviewId);
+          const record = accessCodeReviews.get(reviewId);
+          if (!record || record.used) return fail(res, 409);
+          if (input.confirmation !== REVOKE_ACCESS_CODE_CONFIRMATION) return fail(res, 400);
+          record.used = true;
+          try {
+            const result = await applyManagedAccessCode(deps.db, record.review, now());
+            accessCodeReviews.delete(reviewId);
+            return send(res, 200, { result });
+          } catch (error) {
+            record.used = false;
+            throw error;
+          }
         }
         if (url.pathname === "/api/video/release") {
           exactInput(input, ["preparationId"]);
