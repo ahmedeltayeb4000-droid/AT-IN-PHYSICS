@@ -3,6 +3,7 @@ import { signOut } from "firebase/auth";
 import { Link, Outlet, useNavigate } from "react-router-dom";
 import { PageContainer } from "../components/layout/Primitives";
 import { useAuth } from "../features/auth/AuthContext";
+import { runSignOutOperation } from "../features/auth/signOutOperation";
 import { firebaseAuth } from "../lib/firebase";
 
 export function AppLayout() {
@@ -11,15 +12,13 @@ export function AppLayout() {
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   const handleSignOut = async () => {
-    setIsSigningOut(true);
-
-    try {
-      await signOut(firebaseAuth);
-      navigate("/");
-    } catch (error) {
-      console.error("Unable to sign out.", error);
-      setIsSigningOut(false);
-    }
+    if (isSigningOut) return;
+    await runSignOutOperation({
+      signOut: () => signOut(firebaseAuth),
+      navigateHome: () => navigate("/", { replace: true }),
+      setPending: setIsSigningOut,
+      reportError: (error) => console.error("Unable to sign out.", error),
+    });
   };
 
   return (

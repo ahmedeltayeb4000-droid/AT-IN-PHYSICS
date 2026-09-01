@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { resolveOwnerAccessState } from "../src/features/auth/ownerAccess.ts";
+import { runSignOutOperation } from "../src/features/auth/signOutOperation.ts";
 
 const source = async (path) => readFile(new URL(path, import.meta.url), "utf8");
 
@@ -85,6 +86,70 @@ test("normal students cannot see the owner navigation entry and owners can", asy
   const layout = await source("../src/app/AppLayout.tsx");
   assert.match(layout, /!claimsLoading\s*&&\s*isOwner/);
   assert.match(layout, /to="\/admin"[\s\S]*?Master Control Room/);
+});
+
+test("sign-out UI settles safely across pending, success, failure, and repeated invocation", async () => {
+  let pending = false;
+  let resolveSignOut;
+  let signOutCalls = 0;
+  const navigations = [];
+  const errors = [];
+  const signOutPromise = new Promise((resolve) => {
+    resolveSignOut = resolve;
+  });
+  const operation = () => {
+    if (pending) return Promise.resolve();
+    return runSignOutOperation({
+      signOut: () => {
+        signOutCalls += 1;
+        return signOutPromise;
+      },
+      navigateHome: () => navigations.push({ to: "/", replace: true }),
+      setPending: (value) => {
+        pending = value;
+      },
+      reportError: (error) => errors.push(error),
+    });
+  };
+
+  assert.equal(pending, false);
+  const first = operation();
+  assert.equal(pending, true);
+  await operation();
+  assert.equal(signOutCalls, 1);
+  resolveSignOut();
+  await first;
+  assert.equal(pending, false);
+  assert.deepEqual(navigations, [{ to: "/", replace: true }]);
+  assert.deepEqual(errors, []);
+
+  const failure = new Error("mock sign-out failure");
+  let authenticated = true;
+  await runSignOutOperation({
+    signOut: () => Promise.reject(failure),
+    navigateHome: () => {
+      authenticated = false;
+    },
+    setPending: (value) => {
+      pending = value;
+    },
+    reportError: (error) => errors.push(error),
+  });
+  assert.equal(pending, false);
+  assert.equal(authenticated, true);
+  assert.deepEqual(errors, [failure]);
+});
+
+test("AppLayout alone owns sign-out UI state without changing owner authority", async () => {
+  const layout = await source("../src/app/AppLayout.tsx");
+  const provider = await source("../src/features/auth/AuthProvider.tsx");
+  const player = await source("../src/features/video/SessionVideoPlayer.tsx");
+  assert.match(layout, /isSigningOut\s*\?\s*"Signing Out\.\.\."\s*:\s*"Sign Out"/);
+  assert.match(layout, /if \(isSigningOut\) return/);
+  assert.match(layout, /navigate\("\/",\s*\{\s*replace:\s*true\s*\}\)/);
+  assert.match(layout, /!claimsLoading\s*&&\s*isOwner/);
+  assert.doesNotMatch(provider, /isSigningOut|Signing Out/);
+  assert.doesNotMatch(player, /runSignOutOperation|setIsSigningOut|signOut\s*\(/);
 });
 
 test("admin shell exposes only Overview and Courses navigation", async () => {
