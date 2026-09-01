@@ -1,96 +1,142 @@
 import type { Firestore } from "firebase-admin/firestore";
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldPath, Timestamp } from "firebase-admin/firestore";
 import { validateCourseId } from "../enrollments/validation.js";
 import { validateSessionForVideoPublication } from "../videoPublication/publishVideoMetadata.js";
 import { validateTrustedCourseDocument } from "../tooling/courseCreation.js";
 import { validateTrustedModuleDocument } from "../tooling/moduleCreation.js";
 
 export type OwnerCourseDto = Readonly<{
-  id: string;
+  courseId: string;
   title: string;
-  status: "draft" | "published";
+  publicationStatus: "draft" | "published";
 }>;
 export type OwnerModuleDto = Readonly<{
-  id: string;
+  courseId: string;
+  moduleId: string;
   title: string;
   order: number;
 }>;
 export type OwnerSessionDto = Readonly<{
-  id: string;
+  courseId: string;
+  moduleId: string;
+  sessionId: string;
   title: string;
   order: number;
   publicationStatus: "draft" | "published";
-  release: "immediate" | "released" | "scheduled";
+  releaseState: "immediate" | "released" | "scheduled";
+  releaseAt: string | null;
+  accessState: "opened" | "enrollment-required";
   hasLesson: boolean;
-  hasVideo: boolean;
-  isFree: boolean;
+  hasDeclaredVideo: boolean;
 }>;
 export type TrustedRecord = Readonly<{ id: string; data: unknown }>;
+export type OwnerInventoryEnvelope<T> = Readonly<{
+  items: readonly T[];
+  limit: number;
+  truncated: boolean;
+  malformedCount: 0;
+}>;
+
+export const OWNER_COURSE_INVENTORY_LIMIT = 100;
+export const OWNER_MODULE_INVENTORY_LIMIT = 100;
+export const OWNER_SESSION_INVENTORY_LIMIT = 250;
 
 const compareId = (left: string, right: string) =>
   left < right ? -1 : left > right ? 1 : 0;
 
 export function buildOwnerCourseInventory(
   records: readonly TrustedRecord[],
+  limit = OWNER_COURSE_INVENTORY_LIMIT,
 ): OwnerCourseDto[] {
-  return records
+  return records.slice(0, limit)
     .map(({ id: rawId, data }) => {
-      const id = validateCourseId(rawId);
-      validateTrustedCourseDocument(data, id);
-      return { id, title: data.title, status: data.status };
+      const courseId = validateCourseId(rawId);
+      validateTrustedCourseDocument(data, courseId);
+      return { courseId, title: data.title, publicationStatus: data.status };
     })
-    .sort((a, b) => compareId(a.title, b.title) || compareId(a.id, b.id));
+    .sort((a, b) => compareId(a.title, b.title) || compareId(a.courseId, b.courseId));
 }
 
 export function buildOwnerModuleInventory(
   records: readonly TrustedRecord[],
+  courseId: string,
+  limit = OWNER_MODULE_INVENTORY_LIMIT,
 ): OwnerModuleDto[] {
-  return records
+  const course = validateCourseId(courseId);
+  return records.slice(0, limit)
     .map(({ id: rawId, data }) => {
-      const id = validateCourseId(rawId);
+      const moduleId = validateCourseId(rawId);
       validateTrustedModuleDocument(data);
-      return { id, title: data.title, order: data.order };
+      return { courseId: course, moduleId, title: data.title, order: data.order };
     })
-    .sort((a, b) => a.order - b.order || compareId(a.id, b.id));
+    .sort((a, b) => a.order - b.order || compareId(a.moduleId, b.moduleId));
 }
 
 export function buildOwnerSessionInventory(
   records: readonly TrustedRecord[],
+  courseId: string,
+  moduleId: string,
+  coursePublicationStatus: "draft" | "published",
   trustedNow = new Date(),
+  limit = OWNER_SESSION_INVENTORY_LIMIT,
 ): OwnerSessionDto[] {
   if (Number.isNaN(trustedNow.getTime()))
     throw new Error("Trusted inventory time is invalid.");
-  return records
+  if (
+    coursePublicationStatus !== "draft" &&
+    coursePublicationStatus !== "published"
+  )
+    throw new Error("Trusted Course publication status is invalid.");
+  const course = validateCourseId(courseId);
+  const module = validateCourseId(moduleId);
+  return records.slice(0, limit)
     .map(({ id: rawId, data }) => {
-      const id = validateCourseId(rawId);
+      const sessionId = validateCourseId(rawId);
       const session = validateSessionForVideoPublication(data);
       const hasRelease = Object.prototype.hasOwnProperty.call(
         session,
         "releaseAt",
       );
-      const release: OwnerSessionDto["release"] = !hasRelease
+      const releaseState: OwnerSessionDto["releaseState"] = !hasRelease
         ? "immediate"
         : (session.releaseAt as Timestamp).toMillis() <= trustedNow.getTime()
           ? "released"
           : "scheduled";
       return {
-        id,
+        courseId: course,
+        moduleId: module,
+        sessionId,
         title: session.title,
         order: session.order,
         publicationStatus: session.publicationStatus,
-        release,
+        releaseState,
+        releaseAt: hasRelease
+          ? (session.releaseAt as Timestamp).toDate().toISOString()
+          : null,
+        accessState:
+          coursePublicationStatus === "published" &&
+          session.publicationStatus === "published" &&
+          releaseState !== "scheduled" &&
+          session.isFree === true
+          ? ("opened" as const)
+          : ("enrollment-required" as const),
         hasLesson: Object.prototype.hasOwnProperty.call(session, "lessonText"),
-        hasVideo: Object.prototype.hasOwnProperty.call(session, "videoAssetId"),
-        isFree: session.isFree === true,
+        hasDeclaredVideo: Object.prototype.hasOwnProperty.call(session, "videoAssetId"),
       };
     })
-    .sort((a, b) => a.order - b.order || compareId(a.id, b.id));
+    .sort((a, b) => a.order - b.order || compareId(a.sessionId, b.sessionId));
+}
+
+function envelope<T>(items: readonly T[], limit: number, observed: number): OwnerInventoryEnvelope<T> {
+  return { items, limit, truncated: observed > limit, malformedCount: 0 };
 }
 
 export async function readOwnerCourses(db: Firestore) {
-  const snap = await db.collection("courses").get();
-  return buildOwnerCourseInventory(
-    snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })),
+  const snap = await db.collection("courses").orderBy(FieldPath.documentId()).limit(OWNER_COURSE_INVENTORY_LIMIT + 1).get();
+  return envelope(
+    buildOwnerCourseInventory(snap.docs.map((doc) => ({ id: doc.id, data: doc.data() }))),
+    OWNER_COURSE_INVENTORY_LIMIT,
+    snap.size,
   );
 }
 
@@ -99,9 +145,11 @@ export async function readOwnerModules(db: Firestore, courseId: string) {
   const course = await db.doc(`courses/${id}`).get();
   if (!course.exists) throw new Error("Course was not found.");
   validateTrustedCourseDocument(course.data(), id);
-  const snap = await course.ref.collection("modules").get();
-  return buildOwnerModuleInventory(
-    snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })),
+  const snap = await course.ref.collection("modules").orderBy(FieldPath.documentId()).limit(OWNER_MODULE_INVENTORY_LIMIT + 1).get();
+  return envelope(
+    buildOwnerModuleInventory(snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })), id),
+    OWNER_MODULE_INVENTORY_LIMIT,
+    snap.size,
   );
 }
 
@@ -119,9 +167,16 @@ export async function readOwnerSessions(
   validateTrustedCourseDocument(courseSnap.data(), course);
   if (!moduleSnap.exists) throw new Error("Module was not found.");
   validateTrustedModuleDocument(moduleSnap.data());
-  const snap = await moduleSnap.ref.collection("sessions").get();
-  return buildOwnerSessionInventory(
-    snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })),
+  const snap = await moduleSnap.ref.collection("sessions").orderBy(FieldPath.documentId()).limit(OWNER_SESSION_INVENTORY_LIMIT + 1).get();
+  return envelope(
+    buildOwnerSessionInventory(
+      snap.docs.map((doc) => ({ id: doc.id, data: doc.data() })),
+      course,
+      module,
+      courseSnap.data()!.status,
+    ),
+    OWNER_SESSION_INVENTORY_LIMIT,
+    snap.size,
   );
 }
 

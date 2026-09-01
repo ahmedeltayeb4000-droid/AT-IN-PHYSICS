@@ -10,6 +10,12 @@ import {
   buildOwnerCourseInventory,
   buildOwnerModuleInventory,
   buildOwnerSessionInventory,
+  OWNER_COURSE_INVENTORY_LIMIT,
+  OWNER_MODULE_INVENTORY_LIMIT,
+  OWNER_SESSION_INVENTORY_LIMIT,
+  readOwnerCourses,
+  readOwnerModules,
+  readOwnerSessions,
 } from "../src/ownerConsole/inventory.js";
 import {
   createOwnerConsoleServer,
@@ -53,7 +59,7 @@ const publication = (apply: boolean): SessionPublicationResult => ({
 test("inventory DTOs validate, minimize, and deterministically order trusted state", () => {
   assert.deepEqual(
     buildOwnerCourseInventory([course("z", "Beta"), course("a", "Alpha")]).map(
-      (x) => x.id,
+      (x) => x.courseId,
     ),
     ["a", "z"],
   );
@@ -61,7 +67,7 @@ test("inventory DTOs validate, minimize, and deterministically order trusted sta
     buildOwnerModuleInventory([
       { id: "z", data: { title: "Z", order: 1 } },
       { id: "a", data: { title: "A", order: 0 } },
-    ]).map((x) => x.id),
+    ], "course").map((x) => x.moduleId),
     ["a", "z"],
   );
   const sessions = buildOwnerSessionInventory(
@@ -74,6 +80,16 @@ test("inventory DTOs validate, minimize, and deterministically order trusted sta
           publicationStatus: "draft",
           videoAssetId: "asset",
           lessonText: "SECRET LESSON",
+          isFree: true,
+        },
+      },
+      {
+        id: "released",
+        data: {
+          title: "Released",
+          order: 0,
+          publicationStatus: "published",
+          releaseAt: Timestamp.fromDate(new Date("2029-01-01")),
         },
       },
       {
@@ -86,21 +102,33 @@ test("inventory DTOs validate, minimize, and deterministically order trusted sta
         },
       },
     ],
+    "course",
+    "module",
+    "published",
     new Date("2030-01-01"),
   );
   assert.deepEqual(
-    sessions.map((x) => x.id),
-    ["future", "video"],
+    sessions.map((x) => x.sessionId),
+    ["released", "future", "video"],
   );
-  assert.equal(sessions[0]?.release, "scheduled");
-  assert.deepEqual(Object.keys(sessions[1]!).sort(), [
+  assert.equal(sessions[0]?.releaseState, "released");
+  assert.equal(sessions[1]?.releaseState, "scheduled");
+  assert.equal(sessions[2]?.releaseState, "immediate");
+  assert.equal(sessions[2]?.accessState, "enrollment-required");
+  assert.equal(sessions[2]?.hasLesson, true);
+  assert.equal(sessions[2]?.hasDeclaredVideo, true);
+  assert.equal(sessions[0]?.accessState, "enrollment-required");
+  assert.deepEqual(Object.keys(sessions[2]!).sort(), [
+    "accessState",
+    "courseId",
+    "hasDeclaredVideo",
     "hasLesson",
-    "hasVideo",
-    "id",
-    "isFree",
+    "moduleId",
     "order",
     "publicationStatus",
-    "release",
+    "releaseAt",
+    "releaseState",
+    "sessionId",
     "title",
   ]);
   assert.equal(JSON.stringify(sessions).includes("SECRET LESSON"), false);
@@ -113,7 +141,7 @@ test("inventory DTOs validate, minimize, and deterministically order trusted sta
   assert.throws(() =>
     buildOwnerModuleInventory([
       { id: "bad", data: { title: "Bad", order: -1 } },
-    ]),
+    ], "course"),
   );
   assert.throws(() =>
     buildOwnerSessionInventory([
@@ -121,8 +149,127 @@ test("inventory DTOs validate, minimize, and deterministically order trusted sta
         id: "bad",
         data: { title: "Bad", order: 0, publicationStatus: "preview" },
       },
-    ]),
+    ], "course", "module", "published"),
   );
+});
+
+test("Opened means effective public eligibility across Course, Session, release, and free state", () => {
+  const trustedNow = new Date("2030-01-01T00:00:00.000Z");
+  const session = (
+    id: string,
+    publicationStatus: "draft" | "published",
+    isFree: boolean | undefined,
+    releaseAt?: Date,
+  ) => ({
+    id,
+    data: {
+      title: id,
+      order: 0,
+      publicationStatus,
+      ...(isFree === undefined ? {} : { isFree }),
+      ...(releaseAt === undefined
+        ? {}
+        : { releaseAt: Timestamp.fromDate(releaseAt) }),
+    },
+  });
+  const publishedCourse = buildOwnerSessionInventory(
+    [
+      session("a-immediate", "published", true),
+      session("b-past", "published", true, new Date("2029-12-31T23:59:59.999Z")),
+      session("c-boundary", "published", true, trustedNow),
+      session("d-future", "published", true, new Date("2030-01-01T00:00:00.001Z")),
+      session("e-draft", "draft", true),
+      session("g-false", "published", false),
+      session("h-missing", "published", undefined),
+    ],
+    "course",
+    "module",
+    "published",
+    trustedNow,
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      publishedCourse.map((item) => [item.sessionId, item.accessState]),
+    ),
+    {
+      "a-immediate": "opened",
+      "b-past": "opened",
+      "c-boundary": "opened",
+      "d-future": "enrollment-required",
+      "e-draft": "enrollment-required",
+      "g-false": "enrollment-required",
+      "h-missing": "enrollment-required",
+    },
+  );
+  const draftCourse = buildOwnerSessionInventory(
+    [session("f-draft-course", "published", true)],
+    "course",
+    "module",
+    "draft",
+    trustedNow,
+  );
+  assert.equal(draftCourse[0]?.accessState, "enrollment-required");
+});
+
+test("trusted hierarchy reads are bounded, lazy, deterministic, and precisely truncated", async () => {
+  const validCourse = (id: string) => ({
+    id,
+    data: () => ({ slug: id, title: id, shortDescription: "Description", status: "draft" }),
+  });
+  const validModule = (id: string, order: number) => ({
+    id,
+    data: () => ({ title: id, order }),
+  });
+  const validSession = (id: string, order: number) => ({
+    id,
+    data: () => ({ title: id, order, publicationStatus: "draft" }),
+  });
+  const query = (docs: readonly unknown[], observedLimits: number[]) => ({
+    orderBy() { return this; },
+    limit(value: number) { observedLimits.push(value); return this; },
+    async get() { return { docs, size: docs.length }; },
+  });
+  const courseLimits: number[] = [];
+  const courses = Array.from({ length: 101 }, (_, index) => validCourse(`course-${String(index).padStart(3, "0")}`));
+  const courseDb = { collection: () => query(courses, courseLimits) } as unknown as Firestore;
+  const courseInventory = await readOwnerCourses(courseDb);
+  assert.deepEqual(courseLimits, [101]);
+  assert.equal(courseInventory.items.length, OWNER_COURSE_INVENTORY_LIMIT);
+  assert.equal(courseInventory.truncated, true);
+
+  const moduleLimits: number[] = [];
+  const modules = Array.from({ length: 100 }, (_, index) => validModule(`module-${String(index).padStart(3, "0")}`, 99 - index));
+  const courseSnapshot = {
+    exists: true,
+    data: () => validCourse("course").data(),
+    ref: { collection: () => query(modules, moduleLimits) },
+  };
+  const moduleDb = { doc: () => ({ get: async () => courseSnapshot }) } as unknown as Firestore;
+  const moduleInventory = await readOwnerModules(moduleDb, "course");
+  assert.deepEqual(moduleLimits, [101]);
+  assert.equal(moduleInventory.items.length, OWNER_MODULE_INVENTORY_LIMIT);
+  assert.equal(moduleInventory.truncated, false);
+  assert.equal(moduleInventory.items[0]?.moduleId, "module-099");
+
+  const sessionLimits: number[] = [];
+  const sessionDocs = Array.from({ length: 251 }, (_, index) => validSession(`session-${String(index).padStart(3, "0")}`, 250 - index));
+  const sessionQuery = query(sessionDocs, sessionLimits);
+  const sessionDb = {
+    doc: (path: string) => ({ path }),
+    getAll: async () => [
+      { exists: true, data: () => validCourse("course").data() },
+      { exists: true, data: () => validModule("module", 0).data(), ref: { collection: () => sessionQuery } },
+    ],
+  } as unknown as Firestore;
+  const sessionInventory = await readOwnerSessions(sessionDb, "course", "module");
+  assert.deepEqual(sessionLimits, [251]);
+  assert.equal(sessionInventory.items.length, OWNER_SESSION_INVENTORY_LIMIT);
+  assert.equal(sessionInventory.truncated, true);
+  assert.equal(sessionInventory.items[0]?.sessionId, "session-249");
+
+  const emptyLimits: number[] = [];
+  const empty = await readOwnerCourses({ collection: () => query([], emptyLimits) } as unknown as Firestore);
+  assert.deepEqual(empty, { items: [], limit: 100, truncated: false, malformedCount: 0 });
 });
 
 test("server is loopback-only and enforces Host, Origin, CSRF, one-time review, and sanitized responses", async () => {
@@ -130,7 +277,11 @@ test("server is loopback-only and enforces Host, Origin, CSRF, one-time review, 
   let publishCalls = 0;
   let mutationCalls = 0;
   const fakeDb = {
-    collection: () => ({ get: async () => ({ docs: [] }) }),
+    collection: () => ({
+      orderBy() { return this; },
+      limit() { return this; },
+      get: async () => ({ docs: [], size: 0 }),
+    }),
   } as unknown as Firestore;
   const fakeAuth = {} as Auth;
   const publish = (async (_a, _d, options) => {
@@ -171,6 +322,12 @@ test("server is loopback-only and enforces Host, Origin, CSRF, one-time review, 
     assert.equal(badHostStatus, 403);
     const inventory = await fetch(`${origin}/api/courses`);
     assert.equal(inventory.status, 200);
+    assert.deepEqual(await inventory.json(), {
+      courses: [],
+      limit: 100,
+      truncated: false,
+      malformedCount: 0,
+    });
     assert.equal(mutationCalls, 0);
     assert.equal(inventory.headers.get("access-control-allow-origin"), null);
     const missing = await fetch(`${origin}/api/publication/review`, {
@@ -223,11 +380,33 @@ test("server is loopback-only and enforces Host, Origin, CSRF, one-time review, 
     assert.equal(mutationCalls, 1);
     assert.equal((await apply()).status, 409);
     assert.equal(mutationCalls, 1);
-    assert.equal(authorizeCalls, 3);
+    assert.equal(authorizeCalls, 4);
     assert.equal(publishCalls, 3);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+});
+
+test("Sprint 5 Owner UI renders bounded state safely and reuses protected-content detail", async () => {
+  const source = await readFile(
+    new URL("../../src/ownerConsole/server.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /Operational details/);
+  assert.match(source, /\/api\/protected-content\/session\/inventory/);
+  assert.match(source, /readSessionProtectedContentInventory/);
+  assert.match(source, /Showing the first.*d\.limit/);
+  assert.match(source, /No Sessions\.'/);
+  assert.match(source, /No Lesson/);
+  assert.match(source, /Video Declared/);
+  assert.match(source, /Enrollment Required/);
+  assert.match(source, /sessions\.replaceChildren/);
+  assert.doesNotMatch(source, /sessions\.innerHTML/);
+  assert.doesNotMatch(source, /No Lesson[^`]*Requires attention/);
+  assert.doesNotMatch(
+    source,
+    /courses[^\n]*(?:contentKey|plaintextAccessCode|private_key|ownerUid)/,
+  );
 });
 
 test("trusted Course publication requires confirmation, preserves failed review, and prevents replay", async () => {
