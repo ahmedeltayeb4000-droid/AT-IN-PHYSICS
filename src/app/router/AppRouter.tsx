@@ -19,6 +19,8 @@ import {
 import { AdminLayout } from "../../pages/admin/AdminLayout";
 import { AdminOverviewPage } from "../../pages/admin/AdminOverviewPage";
 import { AdminCoursesPage } from "../../pages/admin/AdminCoursesPage";
+import { TermsPage } from "../../pages/legal/TermsPage";
+import { PrivacyPage } from "../../pages/legal/PrivacyPage";
 
 export function AppRouter() {
   return (
@@ -32,6 +34,8 @@ export function AppRouter() {
             element={<SessionDetailPage />}
           />
           <Route path="auth" element={<Navigate to="/login" replace />} />
+          <Route path="terms" element={<TermsPage />} />
+          <Route path="privacy" element={<PrivacyPage />} />
           <Route
             path="login"
             element={

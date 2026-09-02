@@ -27,8 +27,11 @@ export function HomePage() {
     queryFn: () => getPublicFreeSessionsForCourses(courses!),
     enabled: Boolean(courses),
   });
-  const features = (t('features.items', { returnObjects: true }) as string[]) || [];
-  const faqs = (t('faq.items', { returnObjects: true }) as { q: string, a: string }[]) || [];
+  const features =
+    (t("features.items", { returnObjects: true }) as string[]) || [];
+  const faqs =
+    (t("faq.items", { returnObjects: true }) as { q: string; a: string }[]) ||
+    [];
 
   return (
     <PageTransition>
@@ -36,8 +39,10 @@ export function HomePage() {
         <PhysicsBackground />
         <PageContainer className="relative py-28">
           <Badge tone="info">PHYSICIST | AHMED ELTAYEB</Badge>
-          <h1 className="mt-6 text-7xl font-bold text-text">{t('hero.title')}</h1>
-          <p className="mt-6 text-lg text-text-muted">{t('hero.subtitle')}</p>
+          <h1 className="mt-6 text-7xl font-bold text-text">
+            {t("hero.title")}
+          </h1>
+          <p className="mt-6 text-lg text-text-muted">{t("hero.subtitle")}</p>
         </PageContainer>
       </section>
 
@@ -51,8 +56,12 @@ export function HomePage() {
               { label: "Build real understanding", value: "Focused practice" },
             ].map((item) => (
               <div key={item.value} className="text-center">
-                <div className="text-xl font-bold text-accent">{item.value}</div>
-                <div className="text-sm text-text-muted mt-1 uppercase tracking-wider">{item.label}</div>
+                <div className="text-xl font-bold text-accent">
+                  {item.value}
+                </div>
+                <div className="text-sm text-text-muted mt-1 uppercase tracking-wider">
+                  {item.label}
+                </div>
               </div>
             ))}
           </div>
@@ -61,13 +70,21 @@ export function HomePage() {
 
       <Section className="py-16">
         <PageContainer>
-          <h2 className="mb-12 text-center text-4xl font-bold text-text">{t('courses.title')}</h2>
+          <h2 className="mb-12 text-center text-4xl font-bold text-text">
+            {t("courses.title")}
+          </h2>
           {coursesPending ? (
-            <div className="grid min-h-40 place-items-center text-sm text-text-muted" role="status">
+            <div
+              className="grid min-h-40 place-items-center text-sm text-text-muted"
+              role="status"
+            >
               Loading courses...
             </div>
           ) : coursesError ? (
-            <div className="grid min-h-40 place-items-center text-sm text-danger" role="alert">
+            <div
+              className="grid min-h-40 place-items-center text-sm text-danger"
+              role="alert"
+            >
               Unable to load courses right now. Please try again later.
             </div>
           ) : courses.length === 0 ? (
@@ -81,8 +98,12 @@ export function HomePage() {
                   <div className="h-40 bg-accent/10 rounded-lg mb-4 flex items-center justify-center text-accent font-bold">
                     {course.title}
                   </div>
-                  <h3 className="text-xl font-bold text-text mb-2">{course.title}</h3>
-                  <p className="text-text-muted text-sm mb-4">{course.shortDescription}</p>
+                  <h3 className="text-xl font-bold text-text mb-2">
+                    {course.title}
+                  </h3>
+                  <p className="text-text-muted text-sm mb-4">
+                    {course.shortDescription}
+                  </p>
                   <Link
                     to={`/courses/${course.slug}`}
                     className="mt-auto w-full py-2 bg-accent text-white rounded-lg font-bold text-center"
@@ -100,17 +121,25 @@ export function HomePage() {
         <PageContainer>
           <div className="mx-auto max-w-3xl text-center">
             <Badge tone="info">PUBLIC SAMPLE LESSONS</Badge>
-            <h2 className="mt-5 text-4xl font-bold text-text">Opened Sessions</h2>
+            <h2 className="mt-5 text-4xl font-bold text-text">
+              Opened Sessions
+            </h2>
             <p className="mt-3 text-text-muted">
               Explore selected lessons without enrollment or an Access Code.
             </p>
           </div>
           {openedSessions.isPending ? (
-            <div className="grid min-h-40 place-items-center text-sm text-text-muted" role="status">
+            <div
+              className="grid min-h-40 place-items-center text-sm text-text-muted"
+              role="status"
+            >
               Loading opened sessions...
             </div>
           ) : openedSessions.isError ? (
-            <div className="grid min-h-40 place-items-center text-sm text-text-muted" role="alert">
+            <div
+              className="grid min-h-40 place-items-center text-sm text-text-muted"
+              role="alert"
+            >
               Opened Sessions are currently unavailable.
             </div>
           ) : openedSessions.data.length === 0 ? (
@@ -120,14 +149,23 @@ export function HomePage() {
           ) : (
             <div className="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
               {openedSessions.data.map((session) => (
-                <GlassCard key={`${session.course.id}/${session.module.id}/${session.id}`} className="flex flex-col p-6">
+                <GlassCard
+                  key={`${session.course.id}/${session.module.id}/${session.id}`}
+                  className="flex flex-col p-6"
+                >
                   <Badge tone="info">OPENED</Badge>
-                  <h3 className="mt-4 text-xl font-bold text-text">{session.title}</h3>
+                  <h3 className="mt-4 text-xl font-bold text-text">
+                    {session.title}
+                  </h3>
                   <p className="mt-2 text-sm text-text-muted">
                     {session.course.title} · {session.module.title}
                   </p>
                   <Link
-                    to={buildSessionDetailPath(session.course.slug, session.module.id, session.id)!}
+                    to={buildSessionDetailPath(
+                      session.course.slug,
+                      session.module.id,
+                      session.id,
+                    )!}
                     className="mt-6 inline-flex self-start rounded-lg bg-accent px-4 py-2 text-sm font-bold text-white"
                   >
                     Open Session
@@ -141,11 +179,15 @@ export function HomePage() {
 
       <Section className="bg-panel/40">
         <PageContainer>
-          <h2 className="mb-12 text-center text-4xl font-bold text-text">{t('features.title')}</h2>
+          <h2 className="mb-12 text-center text-4xl font-bold text-text">
+            {t("features.title")}
+          </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {features.map((item, i) => (
               <GlassCard key={i} className="p-6">
-                <div className="text-accent font-bold text-2xl mb-3">0{i + 1}</div>
+                <div className="text-accent font-bold text-2xl mb-3">
+                  0{i + 1}
+                </div>
                 <p className="font-semibold text-text">{item}</p>
               </GlassCard>
             ))}
@@ -155,10 +197,15 @@ export function HomePage() {
 
       <Section>
         <PageContainer>
-          <h2 className="mb-10 text-3xl font-bold text-text text-center">{t('faq.title')}</h2>
+          <h2 className="mb-10 text-3xl font-bold text-text text-center">
+            {t("faq.title")}
+          </h2>
           <div className="max-w-2xl mx-auto space-y-4">
             {faqs.map((faq, i) => (
-              <div key={i} className="border border-border p-5 rounded-xl bg-panel">
+              <div
+                key={i}
+                className="border border-border p-5 rounded-xl bg-panel"
+              >
                 <h3 className="font-bold text-text">{faq.q}</h3>
                 <p className="mt-2 text-text-muted text-sm">{faq.a}</p>
               </div>
@@ -170,8 +217,11 @@ export function HomePage() {
       <footer className="border-t border-border py-8 bg-panel">
         <PageContainer>
           <div className="text-center">
-            <p className="text-text-muted text-sm">{t('footer.rights')}</p>
-            <p className="text-accent mt-2 font-bold cursor-pointer hover:underline">{t('footer.contact')}</p>
+            <p className="text-text-muted text-sm">{t("footer.rights")}</p>
+            <div className="mt-2 flex justify-center gap-4 text-sm font-bold text-accent">
+              <Link to="/terms">Terms</Link>
+              <Link to="/privacy">Privacy</Link>
+            </div>
           </div>
         </PageContainer>
       </footer>

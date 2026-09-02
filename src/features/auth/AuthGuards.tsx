@@ -3,12 +3,23 @@ import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import { resolveOwnerAccessState } from "./ownerAccess";
 
+function AuthLoadingState() {
+  return (
+    <div
+      className="grid min-h-64 place-items-center text-sm text-text-muted"
+      role="status"
+    >
+      Checking your account...
+    </div>
+  );
+}
+
 export function AuthGuard({ children }: { children: ReactElement }) {
   const { user, loading } = useAuth();
   const location = useLocation();
 
   if (loading) {
-    return null;
+    return <AuthLoadingState />;
   }
 
   if (!user) {
@@ -49,7 +60,7 @@ export function PublicOnlyRoute({ children }: { children: ReactElement }) {
   const { user, loading } = useAuth();
 
   if (loading) {
-    return null;
+    return <AuthLoadingState />;
   }
 
   if (user) {

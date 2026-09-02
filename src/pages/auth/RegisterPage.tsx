@@ -29,8 +29,7 @@ export function RegisterPage() {
     event.preventDefault();
     setError("");
     if (name.trim().length < 2) return setError("Enter your full name.");
-    if (!isValidEmail(email))
-      return setError("Enter a valid email address.");
+    if (!isValidEmail(email)) return setError("Enter a valid email address.");
     const nextPasswordError = passwordError(password);
     if (nextPasswordError) return setError(nextPasswordError);
     if (!accepted)
@@ -85,7 +84,10 @@ export function RegisterPage() {
           onChange={setPassword}
           autoComplete="new-password"
         />
-        <p className="text-xs leading-5 text-text-subtle">Use 10+ characters with at least three of: uppercase, lowercase, number, symbol.</p>
+        <p className="text-xs leading-5 text-text-subtle">
+          Use 10+ characters with at least three of: uppercase, lowercase,
+          number, symbol.
+        </p>
         <label className="flex items-start gap-2 text-sm leading-5 text-text-muted">
           <input
             type="checkbox"
@@ -95,13 +97,13 @@ export function RegisterPage() {
             required
           />
           I agree to the{" "}
-          <a className="text-accent" href="/terms">
+          <Link className="text-accent" to="/terms">
             Terms &amp; Conditions
-          </a>{" "}
+          </Link>{" "}
           and{" "}
-          <a className="text-accent" href="/privacy">
+          <Link className="text-accent" to="/privacy">
             Privacy Policy
-          </a>
+          </Link>
           .
         </label>
         <Button className="w-full" type="submit" isLoading={isLoading}>
