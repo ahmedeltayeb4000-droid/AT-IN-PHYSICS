@@ -409,6 +409,41 @@ test("Sprint 5 Owner UI renders bounded state safely and reuses protected-conten
   );
 });
 
+test("Owner Control serves a structured responsive dashboard without weakening its local boundary", async () => {
+  const fakeDb = { collection: () => ({ orderBy() { return this; }, limit() { return this; }, get: async () => ({ docs: [], size: 0 }) }) } as unknown as Firestore;
+  const { server } = createOwnerConsoleServer({ auth: {} as Auth, db: fakeDb, ownerUid: "owner", projectId: "demo-at-in-physics", authorize: async () => {} });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  try {
+    const pageResponse = await fetch(origin);
+    const html = await pageResponse.text();
+    const styleResponse = await fetch(origin + "/styles.css");
+    const styles = await styleResponse.text();
+    const polishResponse = await fetch(origin + "/polish.js");
+    const polish = await polishResponse.text();
+    assert.equal(styleResponse.headers.get("content-type"), "text/css; charset=utf-8");
+    assert.equal(styleResponse.headers.get("access-control-allow-origin"), null);
+    assert.match(pageResponse.headers.get("content-security-policy") ?? "", /style-src 'self'/);
+    assert.match(html, /A\.T IN PHYSICS/);
+    assert.match(html, /Target: demo-at-in-physics/);
+    assert.match(html, /href="\/styles\.css"/);
+    assert.match(html, /src="\/polish\.js"/);
+    for (const target of ["#overview", "#courses", "#modules", "#access-codes", "#enrollments", "#sessions-section", "#emergency"]) assert.match(polish, new RegExp(target));
+    assert.match(polish, /Local Trusted Control/);
+    assert.match(polish, /aria-live/);
+    assert.match(styles, /:focus-visible/);
+    assert.match(styles, /@media\(max-width:760px\)/);
+    assert.match(styles, /\.danger-zone/);
+    assert.match(styles, /dialog::backdrop/);
+    assert.match(polish, /Review \+ exact confirmation required/);
+    assert.match(polish, /aria-modal/);
+    assert.doesNotMatch(html + styles + polish, /ownerUid|private_key|contentKey/);
+    assert.doesNotThrow(() => new Script(polish));
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("trusted Course publication requires confirmation, preserves failed review, and prevents replay", async () => {
   let authorized = 0;
   let reviewCalls = 0;

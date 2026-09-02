@@ -132,6 +132,7 @@ import {
   type AccessCodeReview,
 } from "./accessCodeManagement.js";
 import { ACCESS_CODE_MANAGEMENT_CLIENT_JS } from "./accessCodeManagementClient.js";
+import { OWNER_CONSOLE_CSS, OWNER_CONSOLE_POLISH_JS } from "./polish.js";
 import { PROTECTED_CONTENT_CLIENT_JS } from "./protectedContentClient.js";
 import { SESSION_EMERGENCY_CLIENT_JS } from "./sessionEmergencyClient.js";
 import {
@@ -458,7 +459,9 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "set-cookie":
             "owner-control=active; HttpOnly; SameSite=Strict; Path=/",
         });
-        return res.end(renderOwnerConsole(deps.projectId));
+        return res.end(renderOwnerConsole(deps.projectId)
+          .replace("</head>", '<link rel="stylesheet" href="/styles.css"></head>')
+          .replace("</body>", '<script src="/polish.js" defer></script></body>'));
       }
       if (req.method === "GET" && url.pathname === "/app.js") {
         res.writeHead(200, {
@@ -468,6 +471,14 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         return res.end(
           `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${SESSION_EMERGENCY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_CLIENT_JS.replace("button.textContent='Protected Content'", "button.textContent='Operational details'").replace("catch(e){showError(e)}}async function enhanceProtectedActions", "catch(e){msg.textContent='Requires attention: protected-content details could not be verified.'}}async function enhanceProtectedActions").replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_TARGET_BINDING_JS}\n${LEGACY_VIDEO_BIND_CREATE_ONLY_CLIENT_JS}\n${ACCESS_CODE_CLIENT_JS}\n${ACCESS_CODE_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
         );
+      }
+      if (req.method === "GET" && url.pathname === "/polish.js") {
+        res.writeHead(200, { ...JSON_HEADERS, "content-type": "text/javascript; charset=utf-8" });
+        return res.end(OWNER_CONSOLE_POLISH_JS);
+      }
+      if (req.method === "GET" && url.pathname === "/styles.css") {
+        res.writeHead(200, { ...JSON_HEADERS, "content-type": "text/css; charset=utf-8" });
+        return res.end(OWNER_CONSOLE_CSS);
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
         return send(res, 200, { projectId: deps.projectId, csrf });
