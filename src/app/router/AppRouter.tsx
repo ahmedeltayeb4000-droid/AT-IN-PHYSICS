@@ -15,12 +15,14 @@ import {
   AuthGuard,
   OwnerGuard,
   PublicOnlyRoute,
+  StaffAccessCodeGuard,
 } from "../../features/auth/AuthGuards";
 import { AdminLayout } from "../../pages/admin/AdminLayout";
 import { AdminOverviewPage } from "../../pages/admin/AdminOverviewPage";
 import { AdminCoursesPage } from "../../pages/admin/AdminCoursesPage";
 import { TermsPage } from "../../pages/legal/TermsPage";
 import { PrivacyPage } from "../../pages/legal/PrivacyPage";
+import { StaffAccessCodePage } from "../../pages/staff/StaffAccessCodePage";
 
 export function AppRouter() {
   return (
@@ -74,6 +76,14 @@ export function AppRouter() {
               <AuthGuard>
                 <DashboardPage />
               </AuthGuard>
+            }
+          />
+          <Route
+            path="staff/access-codes"
+            element={
+              <StaffAccessCodeGuard>
+                <StaffAccessCodePage />
+              </StaffAccessCodeGuard>
             }
           />
           <Route

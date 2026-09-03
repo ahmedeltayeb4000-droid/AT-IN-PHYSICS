@@ -36,6 +36,21 @@ service cloud.firestore {
         && request.auth.token.owner == true;
     }
 
+    function canCreateAccessCodes() {
+      let capabilityPath = /databases/$(database)/documents/staffCapabilities/$(request.auth.uid);
+      let capability = get(capabilityPath).data;
+      return request.auth != null
+        && exists(capabilityPath)
+        && capability.keys().hasAll(["version", "enabled", "accessCodesCreate", "grantedAt", "grantedByUid"])
+        && capability.keys().hasOnly(["version", "enabled", "accessCodesCreate", "grantedAt", "grantedByUid"])
+        && capability.version == 1
+        && capability.enabled == true
+        && capability.accessCodesCreate == true
+        && capability.grantedAt is timestamp
+        && capability.grantedByUid is string
+        && capability.grantedByUid.size() > 0;
+    }
+
     function isValidCourseId(courseId) {
       return courseId.size() <= 128
         && courseId.matches("^[a-z0-9]+(-[a-z0-9]+)*$");
@@ -90,16 +105,13 @@ service cloud.firestore {
           "redeemedBy",
           "redeemedAt"
         ])
-        && data.keys().hasOnly([
-          "version",
-          "courseId",
-          "status",
-          "createdAt",
-          "expiresAt",
-          "redeemedBy",
-          "redeemedAt"
-        ])
-        && data.version == 1
+        && (
+          (data.version == 1 && data.keys().hasOnly(["version", "courseId", "status", "createdAt", "expiresAt", "redeemedBy", "redeemedAt"]))
+          || (data.version == 2
+            && data.keys().hasOnly(["version", "courseId", "status", "createdAt", "expiresAt", "redeemedBy", "redeemedAt", "createdByUid"])
+            && data.createdByUid is string
+            && data.createdByUid.size() > 0)
+        )
         && isValidCourseId(data.courseId)
         && data.createdAt is timestamp
         && (data.expiresAt == null || data.expiresAt is timestamp)
@@ -170,6 +182,7 @@ service cloud.firestore {
         && after.courseId == before.courseId
         && after.createdAt == before.createdAt
         && after.expiresAt == before.expiresAt
+        && (before.version == 1 || after.createdByUid == before.createdByUid)
         && after.status == "redeemed"
         && after.redeemedBy == userId
         && after.redeemedAt == request.time;
@@ -484,7 +497,19 @@ service cloud.firestore {
             && resource.data.redeemedBy == request.auth.uid
           )
         );
-      allow list, create, delete: if false;
+      allow create: if request.auth != null
+        && canCreateAccessCodes()
+        && isCanonicalAccessCodeId(accessCodeId)
+        && isValidAccessCodeData(request.resource.data)
+        && request.resource.data.version == 2
+        && request.resource.data.status == "active"
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.redeemedBy == null
+        && request.resource.data.redeemedAt == null
+        && (request.resource.data.expiresAt == null || request.resource.data.expiresAt > request.time)
+        && isPublishedTrustedCourse(request.resource.data.courseId);
+      allow list, delete: if false;
       allow update: if request.auth != null
         && isCanonicalAccessCodeId(accessCodeId)
         && isActiveUnexpiredAccessCode(resource.data)
@@ -511,6 +536,11 @@ service cloud.firestore {
           resource.data.courseId,
           accessCodeId
         );
+    }
+
+    match /staffCapabilities/{staffUid} {
+      allow get: if request.auth != null && request.auth.uid == staffUid;
+      allow list, create, update, delete: if false;
     }
 
     match /enrollments/{enrollmentId} {

@@ -2,12 +2,14 @@ import { useEffect, useState, type ReactNode } from "react";
 import { onIdTokenChanged, type User } from "firebase/auth";
 import { firebaseAuth } from "../../lib/firebase";
 import { AuthContext } from "./AuthContext";
+import { getOwnStaffCapability } from "../staff/staffCapabilityRepository";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [claimsLoading, setClaimsLoading] = useState(true);
   const [isOwner, setIsOwner] = useState(false);
+  const [staffAccessCodesCreate, setStaffAccessCodesCreate] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -19,6 +21,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(nextUser);
         setLoading(false);
         setIsOwner(false);
+        setStaffAccessCodesCreate(false);
         if (!nextUser) {
           setClaimsLoading(false);
           return;
@@ -26,8 +29,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setClaimsLoading(true);
         try {
           const token = await nextUser.getIdTokenResult();
+          const capability = await getOwnStaffCapability(nextUser.uid);
           if (active && revision === currentRevision) {
             setIsOwner(token.claims.owner === true);
+            setStaffAccessCodesCreate(Boolean(capability));
           }
         } catch {
           if (active && revision === currentRevision) setIsOwner(false);
@@ -39,6 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         revision += 1;
         setUser(null);
         setIsOwner(false);
+        setStaffAccessCodesCreate(false);
         setLoading(false);
         setClaimsLoading(false);
       },
@@ -50,7 +56,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, claimsLoading, isOwner }}>
+    <AuthContext.Provider
+      value={{ user, loading, claimsLoading, isOwner, staffAccessCodesCreate }}
+    >
       {children}
     </AuthContext.Provider>
   );

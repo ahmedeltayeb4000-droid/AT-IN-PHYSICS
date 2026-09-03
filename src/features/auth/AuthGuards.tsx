@@ -56,6 +56,15 @@ export function OwnerGuard({ children }: { children: ReactElement }) {
   return children;
 }
 
+export function StaffAccessCodeGuard({ children }: { children: ReactElement }) {
+  const { user, loading, claimsLoading, staffAccessCodesCreate } = useAuth();
+  const location = useLocation();
+  if (loading || claimsLoading) return <AuthLoadingState />;
+  if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
+  if (!staffAccessCodesCreate) return <Navigate to="/dashboard" replace />;
+  return children;
+}
+
 export function PublicOnlyRoute({ children }: { children: ReactElement }) {
   const { user, loading } = useAuth();
 

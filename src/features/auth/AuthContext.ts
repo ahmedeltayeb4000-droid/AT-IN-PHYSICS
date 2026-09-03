@@ -6,6 +6,7 @@ type AuthContextValue = {
   loading: boolean;
   claimsLoading: boolean;
   isOwner: boolean;
+  staffAccessCodesCreate: boolean;
 };
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

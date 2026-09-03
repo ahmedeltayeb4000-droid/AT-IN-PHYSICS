@@ -7,7 +7,8 @@ import { runSignOutOperation } from "../features/auth/signOutOperation";
 import { firebaseAuth } from "../lib/firebase";
 
 export function AppLayout() {
-  const { user, loading, claimsLoading, isOwner } = useAuth();
+  const { user, loading, claimsLoading, isOwner, staffAccessCodesCreate } =
+    useAuth();
   const navigate = useNavigate();
   const [isSigningOut, setIsSigningOut] = useState(false);
 
@@ -47,6 +48,14 @@ export function AppLayout() {
                     className="text-sm font-medium hover:text-accent"
                   >
                     Master Control Room
+                  </Link>
+                ) : null}
+                {!claimsLoading && staffAccessCodesCreate ? (
+                  <Link
+                    to="/staff/access-codes"
+                    className="text-sm font-medium hover:text-accent"
+                  >
+                    Staff Access Codes
                   </Link>
                 ) : null}
                 <button

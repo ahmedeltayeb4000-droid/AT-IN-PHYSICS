@@ -27,6 +27,8 @@
     "test:video-publication:integration": "node --test lib/test/videoPublication.integration.test.js",
     "test:video-publication-cli:integration": "node --test lib/test/videoDescriptorPublication.integration.test.js",
     "owner:bootstrap": "npm run build && node lib/src/tooling/bootstrapOwnerCli.js",
+    "staff:capability": "npm run build && node lib/src/tooling/staffCapabilityCli.js",
+    "test:staff-capability": "npm run build && node --test lib/test/staffCapability.test.js",
     "enrollment:grant": "npm run build && node lib/src/tooling/enrollmentGrantCli.js",
     "session-discovery:migrate": "npm run build && node lib/src/tooling/sessionDiscoveryMigrationCli.js",
     "lesson-content:publish": "npm run build && node lib/src/tooling/lessonContentPublicationCli.js",

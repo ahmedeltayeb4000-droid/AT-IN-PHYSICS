@@ -19,6 +19,7 @@ const ACCESS_CODE_FIELDS = [
   "status",
   "version",
 ].sort();
+const ACCESS_CODE_V2_FIELDS = [...ACCESS_CODE_FIELDS, "createdByUid"].sort();
 const ENROLLMENT_FIELDS = [
   "courseId",
   "expiresAt",
@@ -63,8 +64,13 @@ function validCourseId(value: unknown): value is string {
 function requireAccessCodeRecord(data: DocumentData | undefined): DocumentData {
   if (
     !data ||
-    !exactKeys(data, ACCESS_CODE_FIELDS) ||
-    data.version !== 1 ||
+    !(
+      (data.version === 1 && exactKeys(data, ACCESS_CODE_FIELDS)) ||
+      (data.version === 2 &&
+        exactKeys(data, ACCESS_CODE_V2_FIELDS) &&
+        typeof data.createdByUid === "string" &&
+        data.createdByUid.length > 0)
+    ) ||
     !validCourseId(data.courseId) ||
     !(data.createdAt instanceof Timestamp) ||
     (data.expiresAt !== null && !(data.expiresAt instanceof Timestamp)) ||
@@ -92,15 +98,15 @@ function isExactRedeemedEnrollment(
 ): boolean {
   return Boolean(
     data &&
-      exactKeys(data, ENROLLMENT_FIELDS) &&
-      data.userId === uid &&
-      data.courseId === courseId &&
-      data.status === "active" &&
-      data.grantedAt instanceof Timestamp &&
-      data.expiresAt === null &&
-      data.source === "access_code" &&
-      data.sourceId === accessCodeId &&
-      data.grantedBy === "access-code-service",
+    exactKeys(data, ENROLLMENT_FIELDS) &&
+    data.userId === uid &&
+    data.courseId === courseId &&
+    data.status === "active" &&
+    data.grantedAt instanceof Timestamp &&
+    data.expiresAt === null &&
+    data.source === "access_code" &&
+    data.sourceId === accessCodeId &&
+    data.grantedBy === "access-code-service",
   );
 }
 
@@ -108,7 +114,8 @@ export async function redeemAccessCodeForUser(
   user: User | null,
   code: unknown,
 ): Promise<AccessCodeRedemptionResult> {
-  if (!user) throw new AccessCodeRedemptionError("Sign in to redeem an Access Code.");
+  if (!user)
+    throw new AccessCodeRedemptionError("Sign in to redeem an Access Code.");
 
   try {
     const accessCodeId = await deriveAccessCodeId(code);
