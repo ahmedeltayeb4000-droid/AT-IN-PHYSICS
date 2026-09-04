@@ -34,10 +34,7 @@ test("published past and equal release times are visible", () => {
     ),
     true,
   );
-  assert.equal(
-    sessionIsStudentVisible(session({ releaseAt: NOW }), NOW),
-    true,
-  );
+  assert.equal(sessionIsStudentVisible(session({ releaseAt: NOW }), NOW), true);
 });
 
 test("published future Session is excluded", () => {
@@ -46,6 +43,35 @@ test("published future Session is excluded", () => {
       session({ releaseAt: new Date("2031-01-01T00:00:00.000Z") }),
       NOW,
     ),
+    false,
+  );
+});
+
+test("closeAt uses an exclusive boundary and missing closeAt remains legacy-visible", () => {
+  assert.equal(sessionIsStudentVisible(session(), NOW), true);
+  assert.equal(
+    sessionIsStudentVisible(
+      session({ closeAt: new Date("2030-01-01T00:00:00.001Z") }),
+      NOW,
+    ),
+    true,
+  );
+  assert.equal(sessionIsStudentVisible(session({ closeAt: NOW }), NOW), false);
+  assert.equal(
+    sessionIsStudentVisible(
+      session({ closeAt: new Date("2029-12-31T23:59:59.999Z") }),
+      NOW,
+    ),
+    false,
+  );
+});
+
+test("malformed closeAt and non-positive release windows fail closed", () => {
+  for (const closeAt of [null, new Date("invalid"), "bad" as unknown as Date]) {
+    assert.equal(sessionIsStudentVisible(session({ closeAt }), NOW), false);
+  }
+  assert.equal(
+    sessionIsStudentVisible(session({ releaseAt: NOW, closeAt: NOW }), NOW),
     false,
   );
 });
@@ -65,10 +91,7 @@ test("null, malformed, and invalid release values are excluded", () => {
     new Date("invalid"),
     "not-a-timestamp" as unknown as Date,
   ]) {
-    assert.equal(
-      sessionIsStudentVisible(session({ releaseAt }), NOW),
-      false,
-    );
+    assert.equal(sessionIsStudentVisible(session({ releaseAt }), NOW), false);
   }
 });
 
@@ -81,7 +104,11 @@ test("manifest ordering is deterministic by order then ID", () => {
     ],
     NOW,
   );
-  assert.deepEqual(manifest.sessionIds, ["session-a", "session-b", "session-z"]);
+  assert.deepEqual(manifest.sessionIds, [
+    "session-a",
+    "session-b",
+    "session-z",
+  ]);
 });
 
 test("manifest excludes draft, future, and malformed Sessions", () => {
@@ -106,12 +133,24 @@ test("Free Session projection treats absent and false as paid and includes only 
       session({ id: "absent", title: "Absent" }),
       session({ id: "false", title: "False", isFree: false }),
       session({ id: "free", title: "Free", isFree: true }),
-      session({ id: "draft-free", title: "Draft", isFree: true, publicationStatus: "draft" }),
-      session({ id: "future-free", title: "Future", isFree: true, releaseAt: new Date("2031-01-01T00:00:00.000Z") }),
+      session({
+        id: "draft-free",
+        title: "Draft",
+        isFree: true,
+        publicationStatus: "draft",
+      }),
+      session({
+        id: "future-free",
+        title: "Future",
+        isFree: true,
+        releaseAt: new Date("2031-01-01T00:00:00.000Z"),
+      }),
     ],
     NOW,
   );
-  assert.deepEqual(manifest, { sessions: [{ id: "free", title: "Free", order: 1 }] });
+  assert.deepEqual(manifest, {
+    sessions: [{ id: "free", title: "Free", order: 1 }],
+  });
 });
 
 test("empty visible set produces an empty manifest", () => {
@@ -175,7 +214,10 @@ test("manifest equality requires the exact ordered shape", () => {
   const expected = { sessionIds: ["first", "second"] };
   assert.equal(sessionDiscoveryManifestsEqual(expected, expected), true);
   assert.equal(
-    sessionDiscoveryManifestsEqual({ sessionIds: ["second", "first"] }, expected),
+    sessionDiscoveryManifestsEqual(
+      { sessionIds: ["second", "first"] },
+      expected,
+    ),
     false,
   );
   assert.equal(

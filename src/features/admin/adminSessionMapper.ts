@@ -8,6 +8,7 @@ export type AdminSession = Readonly<{
   order: number;
   publicationStatus: SessionPublicationStatus;
   releaseAt?: string;
+  closeAt?: string;
   hasLessonText: boolean;
   hasVideo: boolean;
 }>;
@@ -39,6 +40,7 @@ export function mapAdminSessionDocument(
     order: session.order,
     publicationStatus: session.publicationStatus,
     ...(session.releaseAt ? { releaseAt: session.releaseAt } : {}),
+    ...(session.closeAt ? { closeAt: session.closeAt } : {}),
     hasLessonText: session.lessonText !== undefined,
     hasVideo: session.videoAssetId !== undefined,
   };

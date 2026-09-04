@@ -9,6 +9,7 @@ export type TrustedSessionRecord = {
   readonly publicationStatus: unknown;
   readonly isFree?: unknown;
   readonly releaseAt?: Date | null;
+  readonly closeAt?: Date | null;
   readonly title?: unknown;
 };
 
@@ -77,11 +78,21 @@ export function sessionIsStudentVisible(
   ) {
     return false;
   }
-  if (!("releaseAt" in session)) return true;
-  if (!(session.releaseAt instanceof Date)) return false;
-
-  const releaseAt = session.releaseAt.getTime();
-  return !Number.isNaN(releaseAt) && releaseAt <= trustedNow.getTime();
+  let releaseAt: number | null = null;
+  if ("releaseAt" in session) {
+    if (!(session.releaseAt instanceof Date)) return false;
+    releaseAt = session.releaseAt.getTime();
+    if (Number.isNaN(releaseAt) || releaseAt > trustedNow.getTime())
+      return false;
+  }
+  if (!("closeAt" in session)) return true;
+  if (!(session.closeAt instanceof Date)) return false;
+  const closeAt = session.closeAt.getTime();
+  return (
+    !Number.isNaN(closeAt) &&
+    (releaseAt === null || releaseAt < closeAt) &&
+    trustedNow.getTime() < closeAt
+  );
 }
 
 export function buildSessionDiscoveryManifest(
@@ -123,17 +134,24 @@ export function sessionIsPublicFree(
   session: TrustedSessionRecord,
   trustedNow: Date,
 ): boolean {
-  return session.isFree === true && sessionIsStudentVisible(session, trustedNow);
+  return (
+    session.isFree === true && sessionIsStudentVisible(session, trustedNow)
+  );
 }
 
 export function buildFreeSessionDiscoveryManifest(
   sessions: readonly TrustedSessionRecord[],
   trustedNow: Date,
 ): FreeSessionDiscoveryManifest {
-  const visible = buildSessionDiscoveryManifest(sessions, trustedNow).sessionIds;
+  const visible = buildSessionDiscoveryManifest(
+    sessions,
+    trustedNow,
+  ).sessionIds;
   return {
     sessions: sessions
-      .filter((session) => visible.includes(session.id) && session.isFree === true)
+      .filter(
+        (session) => visible.includes(session.id) && session.isFree === true,
+      )
       .map((session) => {
         const id = validateContentId("sessionId", session.id);
         if (typeof session.title !== "string" || !session.title.trim()) {
@@ -141,7 +159,10 @@ export function buildFreeSessionDiscoveryManifest(
         }
         return { id, title: session.title, order: session.order as number };
       })
-      .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id, "en")),
+      .sort(
+        (left, right) =>
+          left.order - right.order || left.id.localeCompare(right.id, "en"),
+      ),
   };
 }
 
@@ -149,18 +170,26 @@ export function freeSessionDiscoveryManifestsEqual(
   value: unknown,
   expected: FreeSessionDiscoveryManifest,
 ): boolean {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
   const data = value as Record<string, unknown>;
-  if (Object.keys(data).length !== 1 || !Array.isArray(data.sessions)) return false;
-  return data.sessions.length === expected.sessions.length && data.sessions.every((item, index) => {
-    if (typeof item !== "object" || item === null || Array.isArray(item)) return false;
-    const record = item as Record<string, unknown>;
-    const expectedItem = expected.sessions[index];
-    return Object.keys(record).length === 3 &&
-      record.id === expectedItem?.id &&
-      record.title === expectedItem.title &&
-      record.order === expectedItem.order;
-  });
+  if (Object.keys(data).length !== 1 || !Array.isArray(data.sessions))
+    return false;
+  return (
+    data.sessions.length === expected.sessions.length &&
+    data.sessions.every((item, index) => {
+      if (typeof item !== "object" || item === null || Array.isArray(item))
+        return false;
+      const record = item as Record<string, unknown>;
+      const expectedItem = expected.sessions[index];
+      return (
+        Object.keys(record).length === 3 &&
+        record.id === expectedItem?.id &&
+        record.title === expectedItem.title &&
+        record.order === expectedItem.order
+      );
+    })
+  );
 }
 
 export function sessionDiscoveryManifestsEqual(

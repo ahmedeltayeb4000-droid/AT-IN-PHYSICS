@@ -27,6 +27,7 @@ export function trustedSessionRecordFromSnapshot(
 ): TrustedSessionRecord {
   const data = snapshot.data();
   const hasReleaseAt = Object.prototype.hasOwnProperty.call(data, "releaseAt");
+  const hasCloseAt = Object.prototype.hasOwnProperty.call(data, "closeAt");
 
   return {
     id: snapshot.id,
@@ -38,6 +39,12 @@ export function trustedSessionRecordFromSnapshot(
             data.releaseAt instanceof Timestamp
               ? data.releaseAt.toDate()
               : null,
+        }
+      : {}),
+    ...(hasCloseAt
+      ? {
+          closeAt:
+            data.closeAt instanceof Timestamp ? data.closeAt.toDate() : null,
         }
       : {}),
     isFree: data.isFree === true,
@@ -56,7 +63,9 @@ export async function refreshSessionDiscoveryManifest(
   }
 
   const courseReference = db.doc(`courses/${input.courseId}`);
-  const moduleReference = courseReference.collection("modules").doc(input.moduleId);
+  const moduleReference = courseReference
+    .collection("modules")
+    .doc(input.moduleId);
   const sessionsQuery = moduleReference.collection("sessions");
   const manifestReference = moduleReference
     .collection("sessionDiscovery")
@@ -90,7 +99,10 @@ export async function refreshSessionDiscoveryManifest(
     );
     const freeWriteNecessary =
       !freeManifestSnapshot.exists ||
-      !freeSessionDiscoveryManifestsEqual(freeManifestSnapshot.data(), freeManifest);
+      !freeSessionDiscoveryManifestsEqual(
+        freeManifestSnapshot.data(),
+        freeManifest,
+      );
 
     if (writeNecessary) {
       transaction.set(manifestReference, {

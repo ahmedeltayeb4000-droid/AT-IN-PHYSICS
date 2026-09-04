@@ -84,7 +84,11 @@ export function validateSessionForVideoPublication(
 ): DocumentData {
   const data = requireRecord(value, "Existing Session");
   const hasReleaseAt = Object.prototype.hasOwnProperty.call(data, "releaseAt");
-  const hasLessonText = Object.prototype.hasOwnProperty.call(data, "lessonText");
+  const hasCloseAt = Object.prototype.hasOwnProperty.call(data, "closeAt");
+  const hasLessonText = Object.prototype.hasOwnProperty.call(
+    data,
+    "lessonText",
+  );
   const hasVideoAssetId = Object.prototype.hasOwnProperty.call(
     data,
     "videoAssetId",
@@ -100,6 +104,11 @@ export function validateSessionForVideoPublication(
     (data.publicationStatus !== "draft" &&
       data.publicationStatus !== "published") ||
     (hasReleaseAt && !(data.releaseAt instanceof Timestamp)) ||
+    (hasCloseAt && !(data.closeAt instanceof Timestamp)) ||
+    (hasReleaseAt &&
+      hasCloseAt &&
+      (data.closeAt as Timestamp).toMillis() <=
+        (data.releaseAt as Timestamp).toMillis()) ||
     (hasIsFree && typeof data.isFree !== "boolean")
   ) {
     throw new Error("Existing Session is malformed.");
@@ -114,7 +123,9 @@ export function validateSessionForVideoPublication(
   return data;
 }
 
-export function validateExistingVideoAccess(value: unknown): TrustedVideoAccess {
+export function validateExistingVideoAccess(
+  value: unknown,
+): TrustedVideoAccess {
   const data = requireRecord(value, "Existing video access");
   if (
     Object.keys(data).length !== 2 ||
@@ -178,7 +189,8 @@ export async function publishEncryptedVideoMetadata(
     if (
       expectedSessionRevisionMillis !== undefined &&
       sessionSnapshot.updateTime?.toMillis() !== expectedSessionRevisionMillis
-    ) throw new Error("Session changed after video binding review.");
+    )
+      throw new Error("Session changed after video binding review.");
     const session = validateSessionForVideoPublication(sessionSnapshot.data());
 
     const accessSnapshot = await transaction.get(accessReference);

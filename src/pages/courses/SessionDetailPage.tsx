@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { PageContainer, Section } from "../../components/layout/Primitives";
@@ -148,14 +148,14 @@ export function SessionDetailPage() {
   const enrollmentError = Boolean(user) && enrollmentsQuery.isError;
   const entitled = Boolean(
     courseQuery.data &&
-      user &&
-      !enrollmentLoading &&
-      !enrollmentError &&
-      hasCourseEntitlement(
-        enrollmentsQuery.data ?? [],
-        courseQuery.data.id,
-        evaluatedAt,
-      ),
+    user &&
+    !enrollmentLoading &&
+    !enrollmentError &&
+    hasCourseEntitlement(
+      enrollmentsQuery.data ?? [],
+      courseQuery.data.id,
+      evaluatedAt,
+    ),
   );
   const accessReady = Boolean(courseQuery.data) && !enrollmentLoading;
   const sessionDetailQuery = useQuery({
@@ -167,12 +167,36 @@ export function SessionDetailPage() {
       "sessions",
       params?.sessionId,
     ],
-    queryFn: () => entitled
-      ? getSessionDetail(courseQuery.data!, params!.moduleId, params!.sessionId)
-      : getPublicFreeSessionDetail(courseQuery.data!, params!.moduleId, params!.sessionId),
+    queryFn: () =>
+      entitled
+        ? getSessionDetail(
+            courseQuery.data!,
+            params!.moduleId,
+            params!.sessionId,
+          )
+        : getPublicFreeSessionDetail(
+            courseQuery.data!,
+            params!.moduleId,
+            params!.sessionId,
+          ),
     enabled: params !== null && accessReady,
   });
   const courseBackTo = params ? `/courses/${params.slug}` : "/dashboard";
+  const closeAt = sessionDetailQuery.data?.session.closeAt;
+  const refetchSessionDetail = sessionDetailQuery.refetch;
+  useEffect(() => {
+    if (!closeAt) return;
+    const remaining = Date.parse(closeAt) - Date.now();
+    if (remaining <= 0) {
+      void refetchSessionDetail();
+      return;
+    }
+    const timer = window.setTimeout(
+      () => void refetchSessionDetail(),
+      Math.min(remaining, 2_147_483_647),
+    );
+    return () => window.clearTimeout(timer);
+  }, [closeAt, refetchSessionDetail]);
 
   if (params === null) {
     return (
@@ -283,13 +307,17 @@ export function SessionDetailPage() {
                 {session.title}
               </h1>
               {publicFreeAccess ? (
-                <span className="mt-4 inline-flex rounded-full bg-accent px-3 py-1 text-xs font-bold text-white">OPENED SESSION</span>
+                <span className="mt-4 inline-flex rounded-full bg-accent px-3 py-1 text-xs font-bold text-white">
+                  OPENED SESSION
+                </span>
               ) : null}
               <p className="mt-3 text-text-muted">{course.title}</p>
               {session.videoAssetId ? (
                 <SessionVideoPlayer
                   session={session}
-                  watermark={publicFreeAccess ? { mode: "none" } : protectedWatermark}
+                  watermark={
+                    publicFreeAccess ? { mode: "none" } : protectedWatermark
+                  }
                 />
               ) : null}
               <div className="mt-10 rounded-xl border border-white/10 bg-white/[.03] p-6">

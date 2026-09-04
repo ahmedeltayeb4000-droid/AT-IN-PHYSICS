@@ -36,6 +36,11 @@ import type { CoursePublicationReview } from "../src/ownerConsole/coursePublicat
 import type { EnrollmentReview } from "../src/ownerConsole/enrollmentManagement.js";
 import type { AccessCodeReview } from "../src/ownerConsole/accessCodeManagement.js";
 import type { SessionEmergencyReview } from "../src/ownerConsole/sessionEmergency.js";
+import {
+  deriveSessionLifecycleState,
+  reviewSessionAvailability,
+  safeSessionAvailabilityReview,
+} from "../src/ownerConsole/sessionAvailability.js";
 
 const course = (id: string, title = "Course") => ({
   id,
@@ -64,10 +69,13 @@ test("inventory DTOs validate, minimize, and deterministically order trusted sta
     ["a", "z"],
   );
   assert.deepEqual(
-    buildOwnerModuleInventory([
-      { id: "z", data: { title: "Z", order: 1 } },
-      { id: "a", data: { title: "A", order: 0 } },
-    ], "course").map((x) => x.moduleId),
+    buildOwnerModuleInventory(
+      [
+        { id: "z", data: { title: "Z", order: 1 } },
+        { id: "a", data: { title: "A", order: 0 } },
+      ],
+      "course",
+    ).map((x) => x.moduleId),
     ["a", "z"],
   );
   const sessions = buildOwnerSessionInventory(
@@ -118,11 +126,16 @@ test("inventory DTOs validate, minimize, and deterministically order trusted sta
   assert.equal(sessions[2]?.hasLesson, true);
   assert.equal(sessions[2]?.hasDeclaredVideo, true);
   assert.equal(sessions[0]?.accessState, "enrollment-required");
+  assert.equal(sessions[0]?.lifecycleState, "available");
+  assert.equal(sessions[1]?.lifecycleState, "scheduled");
+  assert.equal(sessions[2]?.lifecycleState, "draft");
   assert.deepEqual(Object.keys(sessions[2]!).sort(), [
     "accessState",
+    "closeAt",
     "courseId",
     "hasDeclaredVideo",
     "hasLesson",
+    "lifecycleState",
     "moduleId",
     "order",
     "publicationStatus",
@@ -139,17 +152,23 @@ test("inventory DTOs validate, minimize, and deterministically order trusted sta
     ]),
   );
   assert.throws(() =>
-    buildOwnerModuleInventory([
-      { id: "bad", data: { title: "Bad", order: -1 } },
-    ], "course"),
+    buildOwnerModuleInventory(
+      [{ id: "bad", data: { title: "Bad", order: -1 } }],
+      "course",
+    ),
   );
   assert.throws(() =>
-    buildOwnerSessionInventory([
-      {
-        id: "bad",
-        data: { title: "Bad", order: 0, publicationStatus: "preview" },
-      },
-    ], "course", "module", "published"),
+    buildOwnerSessionInventory(
+      [
+        {
+          id: "bad",
+          data: { title: "Bad", order: 0, publicationStatus: "preview" },
+        },
+      ],
+      "course",
+      "module",
+      "published",
+    ),
   );
 });
 
@@ -175,9 +194,19 @@ test("Opened means effective public eligibility across Course, Session, release,
   const publishedCourse = buildOwnerSessionInventory(
     [
       session("a-immediate", "published", true),
-      session("b-past", "published", true, new Date("2029-12-31T23:59:59.999Z")),
+      session(
+        "b-past",
+        "published",
+        true,
+        new Date("2029-12-31T23:59:59.999Z"),
+      ),
       session("c-boundary", "published", true, trustedNow),
-      session("d-future", "published", true, new Date("2030-01-01T00:00:00.001Z")),
+      session(
+        "d-future",
+        "published",
+        true,
+        new Date("2030-01-01T00:00:00.001Z"),
+      ),
       session("e-draft", "draft", true),
       session("g-false", "published", false),
       session("h-missing", "published", undefined),
@@ -214,7 +243,12 @@ test("Opened means effective public eligibility across Course, Session, release,
 test("trusted hierarchy reads are bounded, lazy, deterministic, and precisely truncated", async () => {
   const validCourse = (id: string) => ({
     id,
-    data: () => ({ slug: id, title: id, shortDescription: "Description", status: "draft" }),
+    data: () => ({
+      slug: id,
+      title: id,
+      shortDescription: "Description",
+      status: "draft",
+    }),
   });
   const validModule = (id: string, order: number) => ({
     id,
@@ -225,26 +259,41 @@ test("trusted hierarchy reads are bounded, lazy, deterministic, and precisely tr
     data: () => ({ title: id, order, publicationStatus: "draft" }),
   });
   const query = (docs: readonly unknown[], observedLimits: number[]) => ({
-    orderBy() { return this; },
-    limit(value: number) { observedLimits.push(value); return this; },
-    async get() { return { docs, size: docs.length }; },
+    orderBy() {
+      return this;
+    },
+    limit(value: number) {
+      observedLimits.push(value);
+      return this;
+    },
+    async get() {
+      return { docs, size: docs.length };
+    },
   });
   const courseLimits: number[] = [];
-  const courses = Array.from({ length: 101 }, (_, index) => validCourse(`course-${String(index).padStart(3, "0")}`));
-  const courseDb = { collection: () => query(courses, courseLimits) } as unknown as Firestore;
+  const courses = Array.from({ length: 101 }, (_, index) =>
+    validCourse(`course-${String(index).padStart(3, "0")}`),
+  );
+  const courseDb = {
+    collection: () => query(courses, courseLimits),
+  } as unknown as Firestore;
   const courseInventory = await readOwnerCourses(courseDb);
   assert.deepEqual(courseLimits, [101]);
   assert.equal(courseInventory.items.length, OWNER_COURSE_INVENTORY_LIMIT);
   assert.equal(courseInventory.truncated, true);
 
   const moduleLimits: number[] = [];
-  const modules = Array.from({ length: 100 }, (_, index) => validModule(`module-${String(index).padStart(3, "0")}`, 99 - index));
+  const modules = Array.from({ length: 100 }, (_, index) =>
+    validModule(`module-${String(index).padStart(3, "0")}`, 99 - index),
+  );
   const courseSnapshot = {
     exists: true,
     data: () => validCourse("course").data(),
     ref: { collection: () => query(modules, moduleLimits) },
   };
-  const moduleDb = { doc: () => ({ get: async () => courseSnapshot }) } as unknown as Firestore;
+  const moduleDb = {
+    doc: () => ({ get: async () => courseSnapshot }),
+  } as unknown as Firestore;
   const moduleInventory = await readOwnerModules(moduleDb, "course");
   assert.deepEqual(moduleLimits, [101]);
   assert.equal(moduleInventory.items.length, OWNER_MODULE_INVENTORY_LIMIT);
@@ -252,24 +301,41 @@ test("trusted hierarchy reads are bounded, lazy, deterministic, and precisely tr
   assert.equal(moduleInventory.items[0]?.moduleId, "module-099");
 
   const sessionLimits: number[] = [];
-  const sessionDocs = Array.from({ length: 251 }, (_, index) => validSession(`session-${String(index).padStart(3, "0")}`, 250 - index));
+  const sessionDocs = Array.from({ length: 251 }, (_, index) =>
+    validSession(`session-${String(index).padStart(3, "0")}`, 250 - index),
+  );
   const sessionQuery = query(sessionDocs, sessionLimits);
   const sessionDb = {
     doc: (path: string) => ({ path }),
     getAll: async () => [
       { exists: true, data: () => validCourse("course").data() },
-      { exists: true, data: () => validModule("module", 0).data(), ref: { collection: () => sessionQuery } },
+      {
+        exists: true,
+        data: () => validModule("module", 0).data(),
+        ref: { collection: () => sessionQuery },
+      },
     ],
   } as unknown as Firestore;
-  const sessionInventory = await readOwnerSessions(sessionDb, "course", "module");
+  const sessionInventory = await readOwnerSessions(
+    sessionDb,
+    "course",
+    "module",
+  );
   assert.deepEqual(sessionLimits, [251]);
   assert.equal(sessionInventory.items.length, OWNER_SESSION_INVENTORY_LIMIT);
   assert.equal(sessionInventory.truncated, true);
   assert.equal(sessionInventory.items[0]?.sessionId, "session-249");
 
   const emptyLimits: number[] = [];
-  const empty = await readOwnerCourses({ collection: () => query([], emptyLimits) } as unknown as Firestore);
-  assert.deepEqual(empty, { items: [], limit: 100, truncated: false, malformedCount: 0 });
+  const empty = await readOwnerCourses({
+    collection: () => query([], emptyLimits),
+  } as unknown as Firestore);
+  assert.deepEqual(empty, {
+    items: [],
+    limit: 100,
+    truncated: false,
+    malformedCount: 0,
+  });
 });
 
 test("server is loopback-only and enforces Host, Origin, CSRF, one-time review, and sanitized responses", async () => {
@@ -278,8 +344,12 @@ test("server is loopback-only and enforces Host, Origin, CSRF, one-time review, 
   let mutationCalls = 0;
   const fakeDb = {
     collection: () => ({
-      orderBy() { return this; },
-      limit() { return this; },
+      orderBy() {
+        return this;
+      },
+      limit() {
+        return this;
+      },
       get: async () => ({ docs: [], size: 0 }),
     }),
   } as unknown as Firestore;
@@ -408,10 +478,118 @@ test("Sprint 5 Owner UI renders bounded state safely and reuses protected-conten
     /courses[^\n]*(?:contentKey|plaintextAccessCode|private_key|ownerUid)/,
   );
 });
+test("Session availability derives exact lifecycle boundaries", () => {
+  const now = new Date("2030-01-01T00:00:00.000Z");
+  const before = Timestamp.fromDate(new Date("2029-12-31T23:59:59.999Z"));
+  const exact = Timestamp.fromDate(now);
+  const after = Timestamp.fromDate(new Date("2030-01-01T00:00:00.001Z"));
+  assert.equal(deriveSessionLifecycleState("draft", null, null, now), "draft");
+  assert.equal(
+    deriveSessionLifecycleState("published", after, null, now),
+    "scheduled",
+  );
+  assert.equal(
+    deriveSessionLifecycleState("published", exact, after, now),
+    "available",
+  );
+  assert.equal(
+    deriveSessionLifecycleState("published", before, exact, now),
+    "closed",
+  );
+  assert.equal(
+    deriveSessionLifecycleState("published", null, null, now),
+    "available",
+  );
+  assert.throws(() =>
+    deriveSessionLifecycleState("published", exact, exact, now),
+  );
+});
+
+test("Session availability review parses canonical values and rejects invalid windows", async () => {
+  const reference = { collection: () => ({ doc: () => reference }) };
+  const snapshots = [
+    {
+      exists: true,
+      data: () => ({
+        slug: "course",
+        title: "Course",
+        shortDescription: "Description",
+        status: "published",
+      }),
+    },
+    { exists: true, data: () => ({ title: "Module", order: 0 }) },
+    {
+      exists: true,
+      data: () => ({
+        title: "Session",
+        order: 0,
+        publicationStatus: "published",
+      }),
+      updateTime: Timestamp.fromMillis(7),
+    },
+  ];
+  const db = {
+    doc: () => reference,
+    getAll: async () => snapshots,
+  } as unknown as Firestore;
+  const review = await reviewSessionAvailability(
+    db,
+    { courseId: "course", moduleId: "module", sessionId: "session" },
+    "2030-01-01T00:00:00.000Z",
+    "2030-01-02T00:00:00.000Z",
+  );
+  assert.deepEqual(
+    safeSessionAvailabilityReview(review, new Date("2030-01-01T12:00:00.000Z")),
+    {
+      courseId: "course",
+      moduleId: "module",
+      sessionId: "session",
+      publicationStatus: "published",
+      currentReleaseAt: null,
+      currentCloseAt: null,
+      proposedReleaseAt: "2030-01-01T00:00:00.000Z",
+      proposedCloseAt: "2030-01-02T00:00:00.000Z",
+      proposedState: "available",
+      requiresConfirmation: true,
+    },
+  );
+  await assert.rejects(
+    reviewSessionAvailability(
+      db,
+      { courseId: "course", moduleId: "module", sessionId: "session" },
+      "bad",
+      null,
+    ),
+  );
+  await assert.rejects(
+    reviewSessionAvailability(
+      db,
+      { courseId: "course", moduleId: "module", sessionId: "session" },
+      "2030-01-02T00:00:00.000Z",
+      "2030-01-02T00:00:00.000Z",
+    ),
+  );
+});
 
 test("Owner Control serves a structured responsive dashboard without weakening its local boundary", async () => {
-  const fakeDb = { collection: () => ({ orderBy() { return this; }, limit() { return this; }, get: async () => ({ docs: [], size: 0 }) }) } as unknown as Firestore;
-  const { server } = createOwnerConsoleServer({ auth: {} as Auth, db: fakeDb, ownerUid: "owner", projectId: "demo-at-in-physics", authorize: async () => {} });
+  const fakeDb = {
+    collection: () => ({
+      orderBy() {
+        return this;
+      },
+      limit() {
+        return this;
+      },
+      get: async () => ({ docs: [], size: 0 }),
+    }),
+  } as unknown as Firestore;
+  const { server } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: fakeDb,
+    ownerUid: "owner",
+    projectId: "demo-at-in-physics",
+    authorize: async () => {},
+  });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
   try {
@@ -421,14 +599,32 @@ test("Owner Control serves a structured responsive dashboard without weakening i
     const styles = await styleResponse.text();
     const polishResponse = await fetch(origin + "/polish.js");
     const polish = await polishResponse.text();
-    assert.equal(styleResponse.headers.get("content-type"), "text/css; charset=utf-8");
-    assert.equal(styleResponse.headers.get("access-control-allow-origin"), null);
-    assert.match(pageResponse.headers.get("content-security-policy") ?? "", /style-src 'self'/);
+    assert.equal(
+      styleResponse.headers.get("content-type"),
+      "text/css; charset=utf-8",
+    );
+    assert.equal(
+      styleResponse.headers.get("access-control-allow-origin"),
+      null,
+    );
+    assert.match(
+      pageResponse.headers.get("content-security-policy") ?? "",
+      /style-src 'self'/,
+    );
     assert.match(html, /A\.T IN PHYSICS/);
     assert.match(html, /Target: demo-at-in-physics/);
     assert.match(html, /href="\/styles\.css"/);
     assert.match(html, /src="\/polish\.js"/);
-    for (const target of ["#overview", "#courses", "#modules", "#access-codes", "#enrollments", "#sessions-section", "#emergency"]) assert.match(polish, new RegExp(target));
+    for (const target of [
+      "#overview",
+      "#courses",
+      "#modules",
+      "#access-codes",
+      "#enrollments",
+      "#sessions-section",
+      "#emergency",
+    ])
+      assert.match(polish, new RegExp(target));
     assert.match(polish, /Local Trusted Control/);
     assert.match(polish, /aria-live/);
     assert.match(styles, /:focus-visible/);
@@ -437,7 +633,10 @@ test("Owner Control serves a structured responsive dashboard without weakening i
     assert.match(styles, /dialog::backdrop/);
     assert.match(polish, /Review \+ exact confirmation required/);
     assert.match(polish, /aria-modal/);
-    assert.doesNotMatch(html + styles + polish, /ownerUid|private_key|contentKey/);
+    assert.doesNotMatch(
+      html + styles + polish,
+      /ownerUid|private_key|contentKey/,
+    );
     assert.doesNotThrow(() => new Script(polish));
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -462,50 +661,134 @@ test("trusted Course publication requires confirmation, preserves failed review,
   };
   const { server, csrfForTests } = createOwnerConsoleServer({
     auth: {} as Auth,
-    db: { collection: () => ({ get: async () => ({ docs: [] }) }) } as unknown as Firestore,
+    db: {
+      collection: () => ({ get: async () => ({ docs: [] }) }),
+    } as unknown as Firestore,
     ownerUid: "owner",
     projectId: "demo-at-in-physics",
-    authorize: async () => { authorized += 1; },
-    reviewCoursePublication: async () => { reviewCalls += 1; return trustedReview; },
+    authorize: async () => {
+      authorized += 1;
+    },
+    reviewCoursePublication: async () => {
+      reviewCalls += 1;
+      return trustedReview;
+    },
     applyCoursePublication: async () => {
       applyCalls += 1;
       if (failApply) throw new Error("SECRET COURSE PUBLICATION DETAIL");
-      return { courseId: "course", title: "Course", status: "published", verified: true };
+      return {
+        courseId: "course",
+        title: "Course",
+        status: "published",
+        verified: true,
+      };
     },
   });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
-  const post = (path: string, value: unknown, headers: Record<string, string> = {}) =>
+  const post = (
+    path: string,
+    value: unknown,
+    headers: Record<string, string> = {},
+  ) =>
     fetch(origin + path, {
       method: "POST",
-      headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests, ...headers },
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "x-owner-control-csrf": csrfForTests,
+        ...headers,
+      },
       body: JSON.stringify(value),
     });
   try {
-    assert.equal((await post("/api/courses/publication/review", { courseId: "course", extra: true })).status, 400);
+    assert.equal(
+      (
+        await post("/api/courses/publication/review", {
+          courseId: "course",
+          extra: true,
+        })
+      ).status,
+      400,
+    );
     assert.equal(reviewCalls, 0);
-    const response = await post("/api/courses/publication/review", { courseId: "course" });
+    const response = await post("/api/courses/publication/review", {
+      courseId: "course",
+    });
     assert.equal(response.status, 200);
-    const reviewed = await response.json() as { reviewId: string; review: unknown };
+    const reviewed = (await response.json()) as {
+      reviewId: string;
+      review: unknown;
+    };
     const serialized = JSON.stringify(reviewed);
     assert.equal(serialized.includes("revisionMillis"), false);
     assert.equal(serialized.includes("shortDescription"), false);
     assert.equal(serialized.includes("owner"), false);
-    assert.equal((await post("/api/courses/publication/apply", { reviewId: reviewed.reviewId, confirmation: "wrong" })).status, 400);
+    assert.equal(
+      (
+        await post("/api/courses/publication/apply", {
+          reviewId: reviewed.reviewId,
+          confirmation: "wrong",
+        })
+      ).status,
+      400,
+    );
     assert.equal(applyCalls, 0);
-    assert.equal((await post("/api/courses/publication/apply", { reviewId: reviewed.reviewId, confirmation: "PUBLISH COURSE" })).status, 200);
+    assert.equal(
+      (
+        await post("/api/courses/publication/apply", {
+          reviewId: reviewed.reviewId,
+          confirmation: "PUBLISH COURSE",
+        })
+      ).status,
+      200,
+    );
     assert.equal(applyCalls, 1);
-    assert.equal((await post("/api/courses/publication/apply", { reviewId: reviewed.reviewId, confirmation: "PUBLISH COURSE" })).status, 409);
+    assert.equal(
+      (
+        await post("/api/courses/publication/apply", {
+          reviewId: reviewed.reviewId,
+          confirmation: "PUBLISH COURSE",
+        })
+      ).status,
+      409,
+    );
     assert.equal(applyCalls, 1);
     failApply = true;
-    const failedReview = await (await post("/api/courses/publication/review", { courseId: "course" })).json() as { reviewId: string };
-    const failedApply = await post("/api/courses/publication/apply", { reviewId: failedReview.reviewId, confirmation: "PUBLISH COURSE" });
+    const failedReview = (await (
+      await post("/api/courses/publication/review", { courseId: "course" })
+    ).json()) as { reviewId: string };
+    const failedApply = await post("/api/courses/publication/apply", {
+      reviewId: failedReview.reviewId,
+      confirmation: "PUBLISH COURSE",
+    });
     assert.equal(failedApply.status, 400);
     const failedBody = await failedApply.text();
-    assert.equal(failedBody.includes("SECRET COURSE PUBLICATION DETAIL"), false);
+    assert.equal(
+      failedBody.includes("SECRET COURSE PUBLICATION DETAIL"),
+      false,
+    );
     assert.match(failedBody, /Owner Control could not complete the request/);
-    assert.equal((await post("/api/courses/publication/review", { courseId: "course" }, { origin: "http://example.test" })).status, 403);
-    assert.equal((await post("/api/courses/publication/review", { courseId: "course" }, { "x-owner-control-csrf": "wrong" })).status, 403);
+    assert.equal(
+      (
+        await post(
+          "/api/courses/publication/review",
+          { courseId: "course" },
+          { origin: "http://example.test" },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await post(
+          "/api/courses/publication/review",
+          { courseId: "course" },
+          { "x-owner-control-csrf": "wrong" },
+        )
+      ).status,
+      403,
+    );
     const script = await (await fetch(origin + "/app.js")).text();
     assert.doesNotThrow(() => new Script(script));
     assert.match(script, /Review Course Publication/);
@@ -528,12 +811,20 @@ test("Enrollment Management inventory and exact review/apply routes are authoriz
     source: "manual" as const,
     grantedBy: "secret-owner",
   };
-  const reviewed = (operation: EnrollmentReview["operation"]): EnrollmentReview => ({
+  const reviewed = (
+    operation: EnrollmentReview["operation"],
+  ): EnrollmentReview => ({
     operation,
     target: { userId: "student", courseId: "mechanics" },
-    current: { ...enrollment, status: operation === "reactivate" ? "revoked" : "active" },
+    current: {
+      ...enrollment,
+      status: operation === "reactivate" ? "revoked" : "active",
+    },
     proposedStatus: operation === "revoke" ? "revoked" : "active",
-    proposedExpiresAt: operation === "extend" ? Timestamp.fromMillis(4_133_980_800_000) : enrollment.expiresAt,
+    proposedExpiresAt:
+      operation === "extend"
+        ? Timestamp.fromMillis(4_133_980_800_000)
+        : enrollment.expiresAt,
     revisionMillis: 99,
   });
   const { server, csrfForTests } = createOwnerConsoleServer({
@@ -542,24 +833,75 @@ test("Enrollment Management inventory and exact review/apply routes are authoriz
     ownerUid: "secret-owner",
     projectId: "demo-at-in-physics",
     now: () => new Date("2030-01-01T00:00:00.000Z"),
-    authorize: async () => { authorized += 1; },
+    authorize: async () => {
+      authorized += 1;
+    },
     readEnrollmentInventory: async () => ({
-      enrollments: [{ userId: "student", courseId: "mechanics", courseTitle: "Mechanics", status: "active", accessState: "active", grantedAt: "1970-01-01T00:00:01.000Z", expiresAt: "2100-01-01T00:00:00.000Z", source: "manual" }],
+      enrollments: [
+        {
+          userId: "student",
+          courseId: "mechanics",
+          courseTitle: "Mechanics",
+          status: "active",
+          accessState: "active",
+          grantedAt: "1970-01-01T00:00:01.000Z",
+          expiresAt: "2100-01-01T00:00:00.000Z",
+          source: "manual",
+        },
+      ],
       limit: 250,
       limitReached: false,
       malformedCount: 0,
     }),
-    inspectEnrollment: async () => ({ userId: "student", courseId: "mechanics", courseTitle: "Mechanics", status: "active", accessState: "active", grantedAt: "1970-01-01T00:00:01.000Z", expiresAt: "2100-01-01T00:00:00.000Z", source: "manual" }),
-    reviewEnrollmentStatus: async (_db, _target, operation) => reviewed(operation),
+    inspectEnrollment: async () => ({
+      userId: "student",
+      courseId: "mechanics",
+      courseTitle: "Mechanics",
+      status: "active",
+      accessState: "active",
+      grantedAt: "1970-01-01T00:00:01.000Z",
+      expiresAt: "2100-01-01T00:00:00.000Z",
+      source: "manual",
+    }),
+    reviewEnrollmentStatus: async (_db, _target, operation) =>
+      reviewed(operation),
     reviewEnrollmentExtension: async () => reviewed("extend"),
     applyEnrollmentReview: async (_db, review) => {
       applies += 1;
-      return { operation: review.operation, enrollment: { userId: "student", courseId: "mechanics", courseTitle: null, status: review.proposedStatus, accessState: review.proposedStatus === "revoked" ? "revoked" : "active", grantedAt: "1970-01-01T00:00:01.000Z", expiresAt: review.proposedExpiresAt?.toDate().toISOString() ?? null, source: "manual" }, verified: true };
+      return {
+        operation: review.operation,
+        enrollment: {
+          userId: "student",
+          courseId: "mechanics",
+          courseTitle: null,
+          status: review.proposedStatus,
+          accessState:
+            review.proposedStatus === "revoked" ? "revoked" : "active",
+          grantedAt: "1970-01-01T00:00:01.000Z",
+          expiresAt: review.proposedExpiresAt?.toDate().toISOString() ?? null,
+          source: "manual",
+        },
+        verified: true,
+      };
     },
   });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
-  const post = (path: string, value: unknown, headers: Record<string, string> = {}) => fetch(origin + path, { method: "POST", headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests, ...headers }, body: JSON.stringify(value) });
+  const post = (
+    path: string,
+    value: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    fetch(origin + path, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "x-owner-control-csrf": csrfForTests,
+        ...headers,
+      },
+      body: JSON.stringify(value),
+    });
   try {
     const inventory = await post("/api/enrollments/inventory", {});
     assert.equal(inventory.status, 200);
@@ -568,29 +910,110 @@ test("Enrollment Management inventory and exact review/apply routes are authoriz
     assert.equal(inventoryText.includes("sourceId"), false);
     assert.equal(inventoryText.includes("revision"), false);
     assert.equal(inventory.headers.get("access-control-allow-origin"), null);
-    assert.equal((await post("/api/enrollments/inventory", { extra: true })).status, 400);
-    assert.equal((await post("/api/enrollments/inspect", { userId: "student", courseId: "mechanics" })).status, 200);
-    assert.equal((await post("/api/enrollments/inspect", { userId: "student", courseId: "mechanics", status: "active" })).status, 400);
+    assert.equal(
+      (await post("/api/enrollments/inventory", { extra: true })).status,
+      400,
+    );
+    assert.equal(
+      (
+        await post("/api/enrollments/inspect", {
+          userId: "student",
+          courseId: "mechanics",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await post("/api/enrollments/inspect", {
+          userId: "student",
+          courseId: "mechanics",
+          status: "active",
+        })
+      ).status,
+      400,
+    );
 
     for (const [operation, confirmation, body] of [
-      ["revoke", "REVOKE ENROLLMENT", { userId: "student", courseId: "mechanics" }],
-      ["reactivate", "REACTIVATE ENROLLMENT", { userId: "student", courseId: "mechanics" }],
-      ["extend", "EXTEND ENROLLMENT", { userId: "student", courseId: "mechanics", expiresAt: "2101-01-01T00:00:00.000Z" }],
+      [
+        "revoke",
+        "REVOKE ENROLLMENT",
+        { userId: "student", courseId: "mechanics" },
+      ],
+      [
+        "reactivate",
+        "REACTIVATE ENROLLMENT",
+        { userId: "student", courseId: "mechanics" },
+      ],
+      [
+        "extend",
+        "EXTEND ENROLLMENT",
+        {
+          userId: "student",
+          courseId: "mechanics",
+          expiresAt: "2101-01-01T00:00:00.000Z",
+        },
+      ],
     ] as const) {
       const response = await post(`/api/enrollments/${operation}/review`, body);
       assert.equal(response.status, 200);
-      const value = await response.json() as { reviewId: string; review: unknown };
+      const value = (await response.json()) as {
+        reviewId: string;
+        review: unknown;
+      };
       const safe = JSON.stringify(value);
       assert.equal(safe.includes("revisionMillis"), false);
       assert.equal(safe.includes("grantedBy"), false);
       assert.equal(safe.includes("sourceId"), false);
-      assert.equal((await post(`/api/enrollments/${operation}/apply`, { reviewId: value.reviewId, confirmation: "WRONG" })).status, 400);
-      assert.equal((await post(`/api/enrollments/${operation}/apply`, { reviewId: value.reviewId, confirmation })).status, 200);
-      assert.equal((await post(`/api/enrollments/${operation}/apply`, { reviewId: value.reviewId, confirmation })).status, 409);
+      assert.equal(
+        (
+          await post(`/api/enrollments/${operation}/apply`, {
+            reviewId: value.reviewId,
+            confirmation: "WRONG",
+          })
+        ).status,
+        400,
+      );
+      assert.equal(
+        (
+          await post(`/api/enrollments/${operation}/apply`, {
+            reviewId: value.reviewId,
+            confirmation,
+          })
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await post(`/api/enrollments/${operation}/apply`, {
+            reviewId: value.reviewId,
+            confirmation,
+          })
+        ).status,
+        409,
+      );
     }
     assert.equal(applies, 3);
-    assert.equal((await post("/api/enrollments/inventory", {}, { origin: "http://example.test" })).status, 403);
-    assert.equal((await post("/api/enrollments/inventory", {}, { "x-owner-control-csrf": "wrong" })).status, 403);
+    assert.equal(
+      (
+        await post(
+          "/api/enrollments/inventory",
+          {},
+          { origin: "http://example.test" },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await post(
+          "/api/enrollments/inventory",
+          {},
+          { "x-owner-control-csrf": "wrong" },
+        )
+      ).status,
+      403,
+    );
     const script = await (await fetch(origin + "/app.js")).text();
     assert.doesNotThrow(() => new Script(script));
     assert.match(script, /Enrollment Management/);
@@ -677,7 +1100,9 @@ test("Access Code generation endpoint preserves owner authority and exact input"
     ownerUid: "trusted-owner",
     projectId: "demo-at-in-physics",
     now: () => new Date("2030-01-01T00:00:00.000Z"),
-    authorize: async () => { if (!permitted) throw new Error("denied"); },
+    authorize: async () => {
+      if (!permitted) throw new Error("denied");
+    },
     generateAccessCode: async (_db, courseId, expiresAt, trustedNow) => {
       calls += 1;
       assert.equal(courseId, "future-course");
@@ -688,18 +1113,41 @@ test("Access Code generation endpoint preserves owner authority and exact input"
   });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
-  const post = (value: unknown) => fetch(origin + "/api/access-codes/create", {
-    method: "POST",
-    headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests },
-    body: JSON.stringify(value),
-  });
+  const post = (value: unknown) =>
+    fetch(origin + "/api/access-codes/create", {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "x-owner-control-csrf": csrfForTests,
+      },
+      body: JSON.stringify(value),
+    });
   try {
-    assert.equal((await post({ courseId: "future-course", expiresAt: null })).status, 400);
+    assert.equal(
+      (await post({ courseId: "future-course", expiresAt: null })).status,
+      400,
+    );
     permitted = true;
-    assert.equal((await post({ courseId: "future-course", expiresAt: null, userId: "student" })).status, 400);
+    assert.equal(
+      (
+        await post({
+          courseId: "future-course",
+          expiresAt: null,
+          userId: "student",
+        })
+      ).status,
+      400,
+    );
     const response = await post({ courseId: "future-course", expiresAt: null });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { accessCode: { code: "[REDACTED]", courseId: "future-course", expiresAt: null } });
+    assert.deepEqual(await response.json(), {
+      accessCode: {
+        code: "[REDACTED]",
+        courseId: "future-course",
+        expiresAt: null,
+      },
+    });
     assert.equal(calls, 1);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -720,20 +1168,36 @@ test("Access Code Management uses opaque bounded state, exact routes, and one-ti
     redeemedBy: null,
     redeemedAt: null,
   };
-  const review: AccessCodeReview = { documentId: hash, current: accessCode, revisionMillis: 7 };
+  const review: AccessCodeReview = {
+    documentId: hash,
+    current: accessCode,
+    revisionMillis: 7,
+  };
   const { server, csrfForTests } = createOwnerConsoleServer({
     auth: {} as Auth,
     db: {} as Firestore,
     ownerUid: "trusted-owner",
     projectId: "demo-at-in-physics",
     now: () => new Date("2030-01-01T00:00:00.000Z"),
-    authorize: async () => { if (!permitted) throw new Error("denied"); },
+    authorize: async () => {
+      if (!permitted) throw new Error("denied");
+    },
     readAccessCodeInventory: async () => {
       inventoryVersion += 1;
       const handle = `opaque-${inventoryVersion}`;
       return {
         response: {
-          accessCodes: [{ handle, courseId: "mechanics", courseTitle: "Mechanics", state: "unused" as const, createdAt: "1970-01-01T00:00:01.000Z", expiresAt: "2100-01-01T00:00:00.000Z", redeemedAt: null }],
+          accessCodes: [
+            {
+              handle,
+              courseId: "mechanics",
+              courseTitle: "Mechanics",
+              state: "unused" as const,
+              createdAt: "1970-01-01T00:00:01.000Z",
+              expiresAt: "2100-01-01T00:00:00.000Z",
+              redeemedAt: null,
+            },
+          ],
           limit: 250,
           limitReached: false,
           malformedCount: 0,
@@ -743,7 +1207,14 @@ test("Access Code Management uses opaque bounded state, exact routes, and one-ti
     },
     inspectAccessCode: async (_db, documentId) => {
       assert.equal(documentId, hash);
-      return { courseId: "mechanics", courseTitle: "Mechanics", state: "unused" as const, createdAt: "1970-01-01T00:00:01.000Z", expiresAt: "2100-01-01T00:00:00.000Z", redeemedAt: null };
+      return {
+        courseId: "mechanics",
+        courseTitle: "Mechanics",
+        state: "unused" as const,
+        createdAt: "1970-01-01T00:00:01.000Z",
+        expiresAt: "2100-01-01T00:00:00.000Z",
+        redeemedAt: null,
+      };
     },
     reviewAccessCodeRevocation: async (_db, documentId) => {
       assert.equal(documentId, hash);
@@ -757,40 +1228,123 @@ test("Access Code Management uses opaque bounded state, exact routes, and one-ti
   });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
-  const post = (path: string, body: unknown, headers: Record<string, string> = {}) => fetch(origin + path, {
-    method: "POST",
-    headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests, ...headers },
-    body: JSON.stringify(body),
-  });
+  const post = (
+    path: string,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    fetch(origin + path, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "x-owner-control-csrf": csrfForTests,
+        ...headers,
+      },
+      body: JSON.stringify(body),
+    });
   try {
     assert.equal((await post("/api/access-codes/inventory", {})).status, 400);
     permitted = true;
-    const firstInventory = await (await post("/api/access-codes/inventory", {})).json() as { accessCodes: Array<{ handle: string }> };
+    const firstInventory = (await (
+      await post("/api/access-codes/inventory", {})
+    ).json()) as { accessCodes: Array<{ handle: string }> };
     const firstHandle = firstInventory.accessCodes[0]!.handle;
     assert.equal(JSON.stringify(firstInventory).includes(hash), false);
-    assert.equal((await post("/api/access-codes/inspect", { handle: firstHandle, courseId: "mechanics" })).status, 400);
-    assert.equal((await post("/api/access-codes/inspect", { handle: firstHandle })).status, 200);
-    const secondInventory = await (await post("/api/access-codes/inventory", {})).json() as { accessCodes: Array<{ handle: string }> };
-    assert.equal((await post("/api/access-codes/inspect", { handle: firstHandle })).status, 409);
+    assert.equal(
+      (
+        await post("/api/access-codes/inspect", {
+          handle: firstHandle,
+          courseId: "mechanics",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (await post("/api/access-codes/inspect", { handle: firstHandle })).status,
+      200,
+    );
+    const secondInventory = (await (
+      await post("/api/access-codes/inventory", {})
+    ).json()) as { accessCodes: Array<{ handle: string }> };
+    assert.equal(
+      (await post("/api/access-codes/inspect", { handle: firstHandle })).status,
+      409,
+    );
     const currentHandle = secondInventory.accessCodes[0]!.handle;
     const reviewIds: string[] = [];
     for (let index = 0; index < 251; index += 1) {
-      const response = await post("/api/access-codes/revoke/review", { handle: currentHandle });
+      const response = await post("/api/access-codes/revoke/review", {
+        handle: currentHandle,
+      });
       assert.equal(response.status, 200);
-      const value = await response.json() as { reviewId: string; review: unknown };
+      const value = (await response.json()) as {
+        reviewId: string;
+        review: unknown;
+      };
       assert.equal(JSON.stringify(value).includes(hash), false);
       assert.equal(JSON.stringify(value).includes("revision"), false);
       assert.equal(JSON.stringify(value).includes("redeemedBy"), false);
       reviewIds.push(value.reviewId);
     }
-    assert.equal((await post("/api/access-codes/revoke/apply", { reviewId: reviewIds[0], confirmation: "REVOKE ACCESS CODE" })).status, 409);
+    assert.equal(
+      (
+        await post("/api/access-codes/revoke/apply", {
+          reviewId: reviewIds[0],
+          confirmation: "REVOKE ACCESS CODE",
+        })
+      ).status,
+      409,
+    );
     const lastReviewId = reviewIds.at(-1)!;
-    assert.equal((await post("/api/access-codes/revoke/apply", { reviewId: lastReviewId, confirmation: "WRONG" })).status, 400);
-    assert.equal((await post("/api/access-codes/revoke/apply", { reviewId: lastReviewId, confirmation: "REVOKE ACCESS CODE" })).status, 200);
-    assert.equal((await post("/api/access-codes/revoke/apply", { reviewId: lastReviewId, confirmation: "REVOKE ACCESS CODE" })).status, 409);
+    assert.equal(
+      (
+        await post("/api/access-codes/revoke/apply", {
+          reviewId: lastReviewId,
+          confirmation: "WRONG",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await post("/api/access-codes/revoke/apply", {
+          reviewId: lastReviewId,
+          confirmation: "REVOKE ACCESS CODE",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await post("/api/access-codes/revoke/apply", {
+          reviewId: lastReviewId,
+          confirmation: "REVOKE ACCESS CODE",
+        })
+      ).status,
+      409,
+    );
     assert.equal(applied, 1);
-    assert.equal((await post("/api/access-codes/inventory", {}, { origin: "http://example.test" })).status, 403);
-    assert.equal((await post("/api/access-codes/inventory", {}, { "x-owner-control-csrf": "wrong" })).status, 403);
+    assert.equal(
+      (
+        await post(
+          "/api/access-codes/inventory",
+          {},
+          { origin: "http://example.test" },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await post(
+          "/api/access-codes/inventory",
+          {},
+          { "x-owner-control-csrf": "wrong" },
+        )
+      ).status,
+      403,
+    );
     const script = await (await fetch(origin + "/app.js")).text();
     assert.doesNotThrow(() => new Script(script));
     assert.match(script, /REVOKE ACCESS CODE/);
@@ -822,14 +1376,32 @@ test("Owner Access Code UI uses the trusted endpoint and keeps plaintext transie
     assert.match(html, /id="accessCodeCopy"/);
     assert.match(script, /api\('\/api\/access-codes\/create'/);
     assert.match(script, /courseId:course\.value/);
-    assert.match(script, /expiresAt:expiry\?new Date\(expiry\)\.toISOString\(\):null/);
+    assert.match(
+      script,
+      /expiresAt:expiry\?new Date\(expiry\)\.toISOString\(\):null/,
+    );
     assert.match(script, /accessCodeGenerate\.disabled=true/);
-    assert.match(script, /accessCodeResult\.hidden=true;accessCodePlaintext\.textContent=''/);
-    assert.match(script, /accessCodePlaintext\.textContent=d\.accessCode\.code/);
-    assert.match(script, /navigator\.clipboard\.writeText\(accessCodePlaintext\.textContent\)/);
+    assert.match(
+      script,
+      /accessCodeResult\.hidden=true;accessCodePlaintext\.textContent=''/,
+    );
+    assert.match(
+      script,
+      /accessCodePlaintext\.textContent=d\.accessCode\.code/,
+    );
+    assert.match(
+      script,
+      /navigator\.clipboard\.writeText\(accessCodePlaintext\.textContent\)/,
+    );
     assert.match(script, /Copy failed\. The Access Code remains visible/);
-    assert.doesNotMatch(ACCESS_CODE_CLIENT_JS, /localStorage|sessionStorage|console\.|location\.|URLSearchParams/);
-    assert.doesNotMatch(ACCESS_CODE_CLIENT_JS, /document ID|SHA-256|accessCodeHash/i);
+    assert.doesNotMatch(
+      ACCESS_CODE_CLIENT_JS,
+      /localStorage|sessionStorage|console\.|location\.|URLSearchParams/,
+    );
+    assert.doesNotMatch(
+      ACCESS_CODE_CLIENT_JS,
+      /document ID|SHA-256|accessCodeHash/i,
+    );
     assert.doesNotThrow(() => new Script(script));
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -837,10 +1409,22 @@ test("Owner Access Code UI uses the trusted endpoint and keeps plaintext transie
 });
 
 test("Owner Access Code client contains no browser generator, persistence, or logging", () => {
-  assert.doesNotMatch(ACCESS_CODE_CLIENT_JS, /crypto|getRandomValues|Math\.random|randomBytes/);
-  assert.doesNotMatch(ACCESS_CODE_CLIENT_JS, /localStorage|sessionStorage|indexedDB|console\.|document\.cookie/);
-  assert.doesNotMatch(ACCESS_CODE_CLIENT_JS, /location\.|history\.|URLSearchParams/);
-  assert.equal((ACCESS_CODE_CLIENT_JS.match(/\/api\/access-codes\/create/g) ?? []).length, 1);
+  assert.doesNotMatch(
+    ACCESS_CODE_CLIENT_JS,
+    /crypto|getRandomValues|Math\.random|randomBytes/,
+  );
+  assert.doesNotMatch(
+    ACCESS_CODE_CLIENT_JS,
+    /localStorage|sessionStorage|indexedDB|console\.|document\.cookie/,
+  );
+  assert.doesNotMatch(
+    ACCESS_CODE_CLIENT_JS,
+    /location\.|history\.|URLSearchParams/,
+  );
+  assert.equal(
+    (ACCESS_CODE_CLIENT_JS.match(/\/api\/access-codes\/create/g) ?? []).length,
+    1,
+  );
 });
 
 test("creation endpoints pass only validated minimum contracts to trusted services", async () => {
@@ -1573,18 +2157,61 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
     applyBindingReview: async (_db, review, projectId) => {
       bindingApplyCalls += 1;
       assert.equal(review.safe.projectId, projectId);
-      return { status: "created", postApplyVerified: true, sessionId: "session", videoAssetId: "session-video", remoteVerified: true, firestoreBindingVerified: true };
+      return {
+        status: "created",
+        postApplyVerified: true,
+        sessionId: "session",
+        videoAssetId: "session-video",
+        remoteVerified: true,
+        firestoreBindingVerified: true,
+      };
     },
-    recoverExistingDeployment: async (target, projectId, deploymentId, reviewId) => {
+    recoverExistingDeployment: async (
+      target,
+      projectId,
+      deploymentId,
+      reviewId,
+    ) => {
       recoveryCalls += 1;
       assert.deepEqual(target, safe.target);
       const review = {
         reviewId,
         release: { descriptorFileName: safe.descriptorFileName },
         fingerprint: "8".repeat(64),
-        safe: { projectId, hostingTarget: "production", hostingSite: "at-in-physics", firebaseToolsVersion: "15.28.1", gitCommit: "0".repeat(40), target, videoAssetId: safe.videoAssetId, artifactFileName: safe.artifactFileName, artifactSha256: safe.artifactSha256, artifactSize: safe.encryptedSize, hostingRoute: safe.hostingRoute, releaseFileCount: 2, releaseTotalBytes: 100, warning: "safe", state: "PRODUCTION_DEPLOYMENT_REVIEW_NOT_DEPLOYED" },
+        safe: {
+          projectId,
+          hostingTarget: "production",
+          hostingSite: "at-in-physics",
+          firebaseToolsVersion: "15.28.1",
+          gitCommit: "0".repeat(40),
+          target,
+          videoAssetId: safe.videoAssetId,
+          artifactFileName: safe.artifactFileName,
+          artifactSha256: safe.artifactSha256,
+          artifactSize: safe.encryptedSize,
+          hostingRoute: safe.hostingRoute,
+          releaseFileCount: 2,
+          releaseTotalBytes: 100,
+          warning: "safe",
+          state: "PRODUCTION_DEPLOYMENT_REVIEW_NOT_DEPLOYED",
+        },
       } as never;
-      return { deployment: { deploymentId, status: "VERIFIED_DEPLOYED", review }, safe: { deploymentId, status: "VERIFIED_DEPLOYED", projectId, sessionId: target.sessionId, videoAssetId: safe.videoAssetId, hostingRoute: safe.hostingRoute, artifactSha256: safe.artifactSha256, artifactSize: safe.encryptedSize, remoteVerified: true, hostingDeploymentPerformed: false, firestoreBindingPerformed: false } };
+      return {
+        deployment: { deploymentId, status: "VERIFIED_DEPLOYED", review },
+        safe: {
+          deploymentId,
+          status: "VERIFIED_DEPLOYED",
+          projectId,
+          sessionId: target.sessionId,
+          videoAssetId: safe.videoAssetId,
+          hostingRoute: safe.hostingRoute,
+          artifactSha256: safe.artifactSha256,
+          artifactSize: safe.encryptedSize,
+          remoteVerified: true,
+          hostingDeploymentPerformed: false,
+          firestoreBindingPerformed: false,
+        },
+      };
     },
   });
   const address = await listenOwnerConsole(server, 0);
@@ -1621,23 +2248,80 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
         },
         body: JSON.stringify(value),
       });
-    assert.equal((await postJson("/api/video/bind/review", { deploymentId: "unknown" })).status, 409);
+    assert.equal(
+      (await postJson("/api/video/bind/review", { deploymentId: "unknown" }))
+        .status,
+      409,
+    );
     for (const [path, confirmation] of [
       ["/api/video/replace/apply", "WRONG"],
       ["/api/video/unbind/apply", "WRONG"],
       ["/api/resource/session/replace/apply", "WRONG"],
       ["/api/resource/session/remove/apply", "WRONG"],
-    ] as const) assert.equal((await postJson(path, { reviewId: "missing", confirmation })).status, 400);
-    assert.equal((await postJson("/api/protected-content/session/inventory", { courseId: "course", moduleId: "module" })).status, 400);
-    assert.equal((await postJson("/api/protected-content/session/inventory", { courseId: "course", moduleId: "module", sessionId: "session", extra: true })).status, 400);
-    assert.equal((await postJson("/api/protected-content/session/inventory", { courseId: "../course", moduleId: "module", sessionId: "session" })).status, 400);
-    const recoveryResponse = await postJson("/api/video/deploy/recover", safe.target);
+    ] as const)
+      assert.equal(
+        (await postJson(path, { reviewId: "missing", confirmation })).status,
+        400,
+      );
+    assert.equal(
+      (
+        await postJson("/api/protected-content/session/inventory", {
+          courseId: "course",
+          moduleId: "module",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await postJson("/api/protected-content/session/inventory", {
+          courseId: "course",
+          moduleId: "module",
+          sessionId: "session",
+          extra: true,
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await postJson("/api/protected-content/session/inventory", {
+          courseId: "../course",
+          moduleId: "module",
+          sessionId: "session",
+        })
+      ).status,
+      400,
+    );
+    const recoveryResponse = await postJson(
+      "/api/video/deploy/recover",
+      safe.target,
+    );
     assert.equal(recoveryResponse.status, 200);
     const recoveryText = await recoveryResponse.text();
-    assert.doesNotMatch(recoveryText, /contentKey|SECRET|descriptor|credential|token/i);
-    const recoveredDeploymentId = JSON.parse(recoveryText).deployment.deploymentId as string;
-    assert.equal((await postJson("/api/video/bind/review", { deploymentId: recoveredDeploymentId })).status, 200);
-    assert.equal((await postJson("/api/video/deploy/recover", { ...safe.target, videoAssetId: safe.videoAssetId })).status, 400);
+    assert.doesNotMatch(
+      recoveryText,
+      /contentKey|SECRET|descriptor|credential|token/i,
+    );
+    const recoveredDeploymentId = JSON.parse(recoveryText).deployment
+      .deploymentId as string;
+    assert.equal(
+      (
+        await postJson("/api/video/bind/review", {
+          deploymentId: recoveredDeploymentId,
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await postJson("/api/video/deploy/recover", {
+          ...safe.target,
+          videoAssetId: safe.videoAssetId,
+        })
+      ).status,
+      400,
+    );
     const releaseResponse = await postJson("/api/video/release", {
       preparationId,
     });
@@ -1685,19 +2369,61 @@ test("video upload endpoint is bounded, same-origin, CSRF-protected, and cannot 
       expectedSessionId: "different-session",
     });
     assert.equal(targetMismatch.status, 400);
-    assert.doesNotMatch(await targetMismatch.text(), /contentKey|revision|fingerprint|descriptor|path/i);
-    const bindingReviewResponse = await postJson("/api/video/bind/review", { deploymentId });
+    assert.doesNotMatch(
+      await targetMismatch.text(),
+      /contentKey|revision|fingerprint|descriptor|path/i,
+    );
+    const bindingReviewResponse = await postJson("/api/video/bind/review", {
+      deploymentId,
+    });
     assert.equal(bindingReviewResponse.status, 200);
     const bindingReviewText = await bindingReviewResponse.text();
-    assert.doesNotMatch(bindingReviewText, /contentKey|SECRET|descriptor|ownerUid/i);
+    assert.doesNotMatch(
+      bindingReviewText,
+      /contentKey|SECRET|descriptor|ownerUid/i,
+    );
     const bindingReviewId = JSON.parse(bindingReviewText).reviewId as string;
-    assert.equal((await postJson("/api/video/bind/apply", { reviewId: bindingReviewId, confirmation: "wrong" })).status, 400);
-    const bindingApplyResponse = await postJson("/api/video/bind/apply", { reviewId: bindingReviewId, confirmation: "BIND VERIFIED VIDEO TO SESSION" });
+    assert.equal(
+      (
+        await postJson("/api/video/bind/apply", {
+          reviewId: bindingReviewId,
+          confirmation: "wrong",
+        })
+      ).status,
+      400,
+    );
+    const bindingApplyResponse = await postJson("/api/video/bind/apply", {
+      reviewId: bindingReviewId,
+      confirmation: "BIND VERIFIED VIDEO TO SESSION",
+    });
     assert.equal(bindingApplyResponse.status, 200);
-    assert.doesNotMatch(await bindingApplyResponse.text(), /contentKey|SECRET|descriptor/i);
-    assert.equal((await postJson("/api/video/bind/apply", { reviewId: bindingReviewId, confirmation: "BIND VERIFIED VIDEO TO SESSION" })).status, 409);
-    assert.equal((await postJson("/api/video/bind/review", { deploymentId: "unknown" })).status, 409);
-    assert.equal((await postJson("/api/video/bind/review", { deploymentId, videoAssetId: "attacker" })).status, 400);
+    assert.doesNotMatch(
+      await bindingApplyResponse.text(),
+      /contentKey|SECRET|descriptor/i,
+    );
+    assert.equal(
+      (
+        await postJson("/api/video/bind/apply", {
+          reviewId: bindingReviewId,
+          confirmation: "BIND VERIFIED VIDEO TO SESSION",
+        })
+      ).status,
+      409,
+    );
+    assert.equal(
+      (await postJson("/api/video/bind/review", { deploymentId: "unknown" }))
+        .status,
+      409,
+    );
+    assert.equal(
+      (
+        await postJson("/api/video/bind/review", {
+          deploymentId,
+          videoAssetId: "attacker",
+        })
+      ).status,
+      400,
+    );
     assert.equal(
       (
         await postJson("/api/video/deploy/apply", {
@@ -1856,9 +2582,19 @@ test("trusted Owner Free/Paid review and apply is authorized, confirmed for publ
     authorize: async () => {},
     reviewFreeStatus: async (_db, target, isFree) => {
       reviewCalls += 1;
-      assert.deepEqual(target, { courseId: "mechanics", moduleId: "motion", sessionId: "intro" });
+      assert.deepEqual(target, {
+        courseId: "mechanics",
+        moduleId: "motion",
+        sessionId: "intro",
+      });
       assert.equal(isFree, true);
-      return { target, currentIsFree: false, proposedIsFree: true, publicationStatus: "published", revisionMillis: 123 };
+      return {
+        target,
+        currentIsFree: false,
+        proposedIsFree: true,
+        publicationStatus: "published",
+        revisionMillis: 123,
+      };
     },
     applyFreeStatus: async (_db, review) => {
       applyCalls += 1;
@@ -1868,24 +2604,160 @@ test("trusted Owner Free/Paid review and apply is authorized, confirmed for publ
   });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
-  const post = (path: string, value: unknown) => fetch(origin + path, {
-    method: "POST",
-    headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests },
-    body: JSON.stringify(value),
-  });
+  const post = (path: string, value: unknown) =>
+    fetch(origin + path, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "x-owner-control-csrf": csrfForTests,
+      },
+      body: JSON.stringify(value),
+    });
   try {
-    const reviewed = await post("/api/sessions/free/review", { courseId: "mechanics", moduleId: "motion", sessionId: "intro", isFree: true });
+    const reviewed = await post("/api/sessions/free/review", {
+      courseId: "mechanics",
+      moduleId: "motion",
+      sessionId: "intro",
+      isFree: true,
+    });
     assert.equal(reviewed.status, 200);
     const text = await reviewed.text();
     assert.doesNotMatch(text, /revisionMillis|ownerUid|contentKey/);
     const reviewId = JSON.parse(text).reviewId as string;
-    assert.equal((await post("/api/sessions/free/apply", { reviewId, confirmation: "wrong" })).status, 400);
+    assert.equal(
+      (
+        await post("/api/sessions/free/apply", {
+          reviewId,
+          confirmation: "wrong",
+        })
+      ).status,
+      400,
+    );
     assert.equal(applyCalls, 0);
-    assert.equal((await post("/api/sessions/free/apply", { reviewId, confirmation: "CHANGE PUBLISHED SESSION ACCESS" })).status, 200);
-    assert.equal((await post("/api/sessions/free/apply", { reviewId, confirmation: "CHANGE PUBLISHED SESSION ACCESS" })).status, 409);
+    assert.equal(
+      (
+        await post("/api/sessions/free/apply", {
+          reviewId,
+          confirmation: "CHANGE PUBLISHED SESSION ACCESS",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await post("/api/sessions/free/apply", {
+          reviewId,
+          confirmation: "CHANGE PUBLISHED SESSION ACCESS",
+        })
+      ).status,
+      409,
+    );
     assert.equal(reviewCalls, 1);
     assert.equal(applyCalls, 1);
-    assert.equal((await post("/api/sessions/free/review", { courseId: "mechanics", moduleId: "motion", sessionId: "intro", isFree: "yes" })).status, 400);
+    assert.equal(
+      (
+        await post("/api/sessions/free/review", {
+          courseId: "mechanics",
+          moduleId: "motion",
+          sessionId: "intro",
+          isFree: "yes",
+        })
+      ).status,
+      400,
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("trusted Owner Session availability requires confirmation and preserves one-time review", async () => {
+  let applied = 0;
+  const target = {
+    courseId: "mechanics",
+    moduleId: "motion",
+    sessionId: "intro",
+  } as const;
+  const review = {
+    target,
+    publicationStatus: "published" as const,
+    currentReleaseAt: null,
+    currentCloseAt: null,
+    proposedReleaseAt: Timestamp.fromMillis(1_000),
+    proposedCloseAt: Timestamp.fromMillis(2_000),
+    revisionMillis: 7,
+  };
+  const { server, csrfForTests } = createOwnerConsoleServer({
+    auth: {} as Auth,
+    db: {} as Firestore,
+    ownerUid: "trusted-owner",
+    projectId: "demo-at-in-physics",
+    now: () => new Date(1_500),
+    authorize: async () => {},
+    reviewSessionAvailability: async (_db, received, releaseAt, closeAt) => {
+      assert.deepEqual(received, target);
+      assert.equal(releaseAt, "1970-01-01T00:00:01.000Z");
+      assert.equal(closeAt, "1970-01-01T00:00:02.000Z");
+      return review;
+    },
+    applySessionAvailability: async (_db, received) => {
+      assert.deepEqual(received, review);
+      applied += 1;
+      return { state: "available" as const, verified: true as const };
+    },
+  });
+  const address = await listenOwnerConsole(server, 0);
+  const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
+  const post = (path: string, value: unknown) =>
+    fetch(origin + path, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "x-owner-control-csrf": csrfForTests,
+      },
+      body: JSON.stringify(value),
+    });
+  try {
+    const response = await post("/api/sessions/availability/review", {
+      ...target,
+      releaseAt: "1970-01-01T00:00:01.000Z",
+      closeAt: "1970-01-01T00:00:02.000Z",
+    });
+    assert.equal(response.status, 200);
+    const payload = (await response.json()) as {
+      reviewId: string;
+      review: unknown;
+    };
+    assert.equal(JSON.stringify(payload).includes("revisionMillis"), false);
+    assert.equal(
+      (
+        await post("/api/sessions/availability/apply", {
+          reviewId: payload.reviewId,
+          confirmation: "wrong",
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await post("/api/sessions/availability/apply", {
+          reviewId: payload.reviewId,
+          confirmation: "CHANGE PUBLISHED SESSION AVAILABILITY",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await post("/api/sessions/availability/apply", {
+          reviewId: payload.reviewId,
+          confirmation: "CHANGE PUBLISHED SESSION AVAILABILITY",
+        })
+      ).status,
+      409,
+    );
+    assert.equal(applied, 1);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
@@ -1894,7 +2766,11 @@ test("trusted Owner Free/Paid review and apply is authorized, confirmed for publ
 test("Emergency Session routes are exact, protected, confirmed, reusable after wrong confirmation, and one-time", async () => {
   let reviewCalls = 0;
   let applyCalls = 0;
-  const target = { courseId: "mechanics", moduleId: "motion", sessionId: "intro" } as const;
+  const target = {
+    courseId: "mechanics",
+    moduleId: "motion",
+    sessionId: "intro",
+  } as const;
   const emergencyReview: SessionEmergencyReview = {
     operation: "session-emergency-withdrawal",
     target,
@@ -1927,31 +2803,98 @@ test("Emergency Session routes are exact, protected, confirmed, reusable after w
     applySessionEmergency: async (_db, review) => {
       applyCalls += 1;
       assert.equal(review.sessionRevisionMillis, 123);
-      return { status: "COMMITTED_AND_VERIFIED", postApplyVerified: true } as const;
+      return {
+        status: "COMMITTED_AND_VERIFIED",
+        postApplyVerified: true,
+      } as const;
     },
   });
   const address = await listenOwnerConsole(server, 0);
   const origin = `http://${OWNER_CONSOLE_HOST}:${address.port}`;
-  const post = (path: string, value: unknown, headers: Record<string, string> = {}) => fetch(origin + path, {
-    method: "POST",
-    headers: { origin, "content-type": "application/json", "x-owner-control-csrf": csrfForTests, ...headers },
-    body: JSON.stringify(value),
-  });
+  const post = (
+    path: string,
+    value: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    fetch(origin + path, {
+      method: "POST",
+      headers: {
+        origin,
+        "content-type": "application/json",
+        "x-owner-control-csrf": csrfForTests,
+        ...headers,
+      },
+      body: JSON.stringify(value),
+    });
   try {
     const input = { ...target };
-    assert.equal((await post("/api/sessions/emergency/review", input, { origin: "http://evil.example" })).status, 403);
-    assert.equal((await post("/api/sessions/emergency/review", input, { "x-owner-control-csrf": "wrong" })).status, 403);
-    assert.equal((await post("/api/sessions/emergency/review", { ...input, extra: true })).status, 400);
+    assert.equal(
+      (
+        await post("/api/sessions/emergency/review", input, {
+          origin: "http://evil.example",
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await post("/api/sessions/emergency/review", input, {
+          "x-owner-control-csrf": "wrong",
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (await post("/api/sessions/emergency/review", { ...input, extra: true }))
+        .status,
+      400,
+    );
     const response = await post("/api/sessions/emergency/review", input);
     assert.equal(response.status, 200);
     const text = await response.text();
-    assert.doesNotMatch(text, /revisionMillis|fingerprint|contentKey|stack|filesystem|[A-Z]:\\/i);
+    assert.doesNotMatch(
+      text,
+      /revisionMillis|fingerprint|contentKey|stack|filesystem|[A-Z]:\\/i,
+    );
     const reviewId = JSON.parse(text).reviewId as string;
-    assert.equal((await post("/api/sessions/emergency/apply", { reviewId, confirmation: "WRONG" })).status, 400);
+    assert.equal(
+      (
+        await post("/api/sessions/emergency/apply", {
+          reviewId,
+          confirmation: "WRONG",
+        })
+      ).status,
+      400,
+    );
     assert.equal(applyCalls, 0);
-    assert.equal((await post("/api/sessions/emergency/apply", { reviewId, confirmation: "WITHDRAW SESSION NOW", extra: true })).status, 400);
-    assert.equal((await post("/api/sessions/emergency/apply", { reviewId, confirmation: "WITHDRAW SESSION NOW" })).status, 200);
-    assert.equal((await post("/api/sessions/emergency/apply", { reviewId, confirmation: "WITHDRAW SESSION NOW" })).status, 409);
+    assert.equal(
+      (
+        await post("/api/sessions/emergency/apply", {
+          reviewId,
+          confirmation: "WITHDRAW SESSION NOW",
+          extra: true,
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await post("/api/sessions/emergency/apply", {
+          reviewId,
+          confirmation: "WITHDRAW SESSION NOW",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await post("/api/sessions/emergency/apply", {
+          reviewId,
+          confirmation: "WITHDRAW SESSION NOW",
+        })
+      ).status,
+      409,
+    );
     assert.equal(reviewCalls, 1);
     assert.equal(applyCalls, 1);
   } finally {

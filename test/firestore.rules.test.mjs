@@ -205,24 +205,40 @@ test("Enrollment management lifecycle preserves active, revoked, extended, and r
     SESSION_RESOURCE_PATH,
     SESSION_RESOURCE_ACCESS_PATH,
   ];
-  for (const path of protectedPaths) await assertSucceeds(getDoc(doc(student, path)));
+  for (const path of protectedPaths)
+    await assertSucceeds(getDoc(doc(student, path)));
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
-    await updateDoc(doc(context.firestore(), enrollmentPath), { status: "revoked" });
+    await updateDoc(doc(context.firestore(), enrollmentPath), {
+      status: "revoked",
+    });
   });
-  for (const path of protectedPaths) await assertFails(getDoc(doc(student, path)));
+  for (const path of protectedPaths)
+    await assertFails(getDoc(doc(student, path)));
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
     await updateDoc(doc(context.firestore(), enrollmentPath), {
       expiresAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")),
     });
   });
-  for (const path of protectedPaths) await assertFails(getDoc(doc(student, path)));
+  for (const path of protectedPaths)
+    await assertFails(getDoc(doc(student, path)));
   await testEnvironment.withSecurityRulesDisabled(async (context) => {
-    await updateDoc(doc(context.firestore(), enrollmentPath), { status: "active" });
+    await updateDoc(doc(context.firestore(), enrollmentPath), {
+      status: "active",
+    });
   });
-  for (const path of protectedPaths) await assertSucceeds(getDoc(doc(student, path)));
-  await assertFails(updateDoc(doc(student, enrollmentPath), { status: "revoked" }));
-  await assertFails(updateDoc(doc(student, enrollmentPath), { expiresAt: Timestamp.fromDate(new Date("2101-01-01T00:00:00.000Z")) }));
-  await assertFails(updateDoc(doc(ownerDb(), enrollmentPath), { status: "revoked" }));
+  for (const path of protectedPaths)
+    await assertSucceeds(getDoc(doc(student, path)));
+  await assertFails(
+    updateDoc(doc(student, enrollmentPath), { status: "revoked" }),
+  );
+  await assertFails(
+    updateDoc(doc(student, enrollmentPath), {
+      expiresAt: Timestamp.fromDate(new Date("2101-01-01T00:00:00.000Z")),
+    }),
+  );
+  await assertFails(
+    updateDoc(doc(ownerDb(), enrollmentPath), { status: "revoked" }),
+  );
 });
 
 test("unauthenticated user cannot get an Enrollment", async () => {
@@ -922,6 +938,7 @@ test("unauthenticated user cannot read a Module", async () => {
 test("active non-expiring Enrollment allows Module read", async () => {
   const path = "courses/mechanics/modules/motion";
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [path]: { title: "Motion", order: 1 },
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
   });
@@ -930,20 +947,28 @@ test("active non-expiring Enrollment allows Module read", async () => {
 
 test("Access Code-produced Enrollment satisfies the existing Course authorization contract", async () => {
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     "courses/mechanics/modules/motion": { title: "Motion", order: 1 },
-    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID, "mechanics", {
-      source: "access_code",
-      grantedBy: "access-code-service",
-    }),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
+      CURRENT_UID,
+      "mechanics",
+      {
+        source: "access_code",
+        grantedBy: "access-code-service",
+      },
+    ),
   });
   await assertSucceeds(
-    getDoc(doc(authenticatedDb(CURRENT_UID), "courses/mechanics/modules/motion")),
+    getDoc(
+      doc(authenticatedDb(CURRENT_UID), "courses/mechanics/modules/motion"),
+    ),
   );
 });
 
 test("active future-expiring Enrollment allows Module read", async () => {
   const path = "courses/mechanics/modules/motion";
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [path]: { title: "Motion", order: 1 },
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(
       CURRENT_UID,
@@ -1078,6 +1103,7 @@ test("unauthenticated user cannot read a Session", async () => {
 test("published unscheduled Session allows read with active Enrollment", async () => {
   const path = "courses/mechanics/modules/motion/sessions/introduction";
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [path]: { title: "Introduction", order: 1, publicationStatus: "published" },
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
   });
@@ -1110,6 +1136,7 @@ test("future scheduled Session denies read with active Enrollment", async () => 
 test("past scheduled Session allows read with active Enrollment", async () => {
   const path = "courses/mechanics/modules/motion/sessions/released";
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [path]: {
       title: "Released",
       order: 2,
@@ -1228,6 +1255,7 @@ test("stored authority mismatch denies Session read", async () => {
 
 test("active Enrollment allows exact-Course Module list query", async () => {
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     "courses/mechanics/modules/motion": { title: "Motion", order: 1 },
     "courses/mechanics/modules/forces": { title: "Forces", order: 2 },
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
@@ -1340,6 +1368,7 @@ test("enrolled student discovers visible Session IDs and directly reads them", a
   const discoveryPath =
     "courses/mechanics/modules/motion/sessionDiscovery/visible";
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [discoveryPath]: { sessionIds: ["released", "unscheduled"] },
     "courses/mechanics/modules/motion/sessions/released": {
       title: "Released",
@@ -1720,6 +1749,7 @@ test("authenticated student without Enrollment cannot get video access", async (
 
 test("active enrolled student can get valid bound video access", async () => {
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [VIDEO_SESSION_PATH]: videoSession(),
     [VIDEO_ACCESS_PATH]: videoAccess(),
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
@@ -1810,6 +1840,7 @@ test("future-release parent Session denies video access", async () => {
 
 test("published unscheduled parent Session allows video access", async () => {
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [VIDEO_SESSION_PATH]: videoSession(),
     [VIDEO_ACCESS_PATH]: videoAccess(),
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
@@ -1821,6 +1852,7 @@ test("published unscheduled parent Session allows video access", async () => {
 
 test("published elapsed-release parent Session allows video access", async () => {
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [VIDEO_SESSION_PATH]: videoSession({
       releaseAt: Timestamp.fromDate(new Date("2000-01-01T00:00:00.000Z")),
     }),
@@ -1987,37 +2019,71 @@ test("authenticated student cannot delete video access", async () => {
 
 test("protected Course metadata permits enrolled students and owners but denies other readers", async () => {
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
     [COURSE_RESOURCE_PATH]: protectedResourceMetadata(),
   });
-  await assertSucceeds(getDoc(doc(authenticatedDb(CURRENT_UID), COURSE_RESOURCE_PATH)));
-  await assertSucceeds(getDocs(collection(authenticatedDb(CURRENT_UID), "courses/mechanics/resources")));
+  await assertSucceeds(
+    getDoc(doc(authenticatedDb(CURRENT_UID), COURSE_RESOURCE_PATH)),
+  );
+  await assertSucceeds(
+    getDocs(
+      collection(authenticatedDb(CURRENT_UID), "courses/mechanics/resources"),
+    ),
+  );
   await assertSucceeds(getDoc(doc(ownerDb(), COURSE_RESOURCE_PATH)));
-  await assertSucceeds(getDocs(collection(ownerDb(), "courses/mechanics/resources")));
+  await assertSucceeds(
+    getDocs(collection(ownerDb(), "courses/mechanics/resources")),
+  );
   await assertFails(getDoc(doc(unauthenticatedDb(), COURSE_RESOURCE_PATH)));
-  await assertFails(getDoc(doc(authenticatedDb("student-missing"), COURSE_RESOURCE_PATH)));
+  await assertFails(
+    getDoc(doc(authenticatedDb("student-missing"), COURSE_RESOURCE_PATH)),
+  );
 });
 
 test("protected Course metadata rejects invalid enrollment states", async () => {
   await seedDocuments({
     [COURSE_RESOURCE_PATH]: protectedResourceMetadata(),
-    [`enrollments/student-revoked_mechanics`]: enrollment("student-revoked", "mechanics", { status: "revoked" }),
-    [`enrollments/student-expired_mechanics`]: enrollment("student-expired", "mechanics", { expiresAt: Timestamp.fromMillis(1) }),
-    [`enrollments/student-cross_quantum-physics`]: enrollment("student-cross", "quantum-physics"),
+    [`enrollments/student-revoked_mechanics`]: enrollment(
+      "student-revoked",
+      "mechanics",
+      { status: "revoked" },
+    ),
+    [`enrollments/student-expired_mechanics`]: enrollment(
+      "student-expired",
+      "mechanics",
+      { expiresAt: Timestamp.fromMillis(1) },
+    ),
+    [`enrollments/student-cross_quantum-physics`]: enrollment(
+      "student-cross",
+      "quantum-physics",
+    ),
     [`enrollments/${OTHER_UID}_mechanics`]: enrollment(OTHER_UID),
   });
-  for (const uid of ["student-revoked", "student-expired", "student-cross", CURRENT_UID]) {
+  for (const uid of [
+    "student-revoked",
+    "student-expired",
+    "student-cross",
+    CURRENT_UID,
+  ]) {
     await assertFails(getDoc(doc(authenticatedDb(uid), COURSE_RESOURCE_PATH)));
   }
 });
 
 test("protected Course metadata exact schema fails closed", async () => {
   const invalidOverrides = [
-    { version: 2 }, { formatVersion: "ATV1" }, { resourceId: "other-resource" },
-    { ciphertextRoute: "/protected-resources/wrong.atr1" }, { title: " bad" },
-    { originalFileName: "../notes.pdf" }, { createdAt: { seconds: 1, nanoseconds: 0 } },
-    { extra: true }, { mimeType: "text/plain" }, { plaintextSize: 0 },
-    { ciphertextSize: 1057 }, { ciphertextSha256: "A".repeat(64) },
+    { version: 2 },
+    { formatVersion: "ATV1" },
+    { resourceId: "other-resource" },
+    { ciphertextRoute: "/protected-resources/wrong.atr1" },
+    { title: " bad" },
+    { originalFileName: "../notes.pdf" },
+    { createdAt: { seconds: 1, nanoseconds: 0 } },
+    { extra: true },
+    { mimeType: "text/plain" },
+    { plaintextSize: 0 },
+    { ciphertextSize: 1057 },
+    { ciphertextSha256: "A".repeat(64) },
   ];
   for (const overrides of invalidOverrides) {
     await testEnvironment.clearFirestore();
@@ -2025,12 +2091,15 @@ test("protected Course metadata exact schema fails closed", async () => {
       [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
       [COURSE_RESOURCE_PATH]: protectedResourceMetadata("course", overrides),
     });
-    await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), COURSE_RESOURCE_PATH)));
+    await assertFails(
+      getDoc(doc(authenticatedDb(CURRENT_UID), COURSE_RESOURCE_PATH)),
+    );
   }
 });
 
 test("protected Course access is exact, paired, student-only, and never listable", async () => {
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
     [COURSE_RESOURCE_PATH]: protectedResourceMetadata(),
     [COURSE_RESOURCE_ACCESS_PATH]: protectedResourceAccess(),
@@ -2038,10 +2107,16 @@ test("protected Course access is exact, paired, student-only, and never listable
   });
   const student = authenticatedDb(CURRENT_UID);
   await assertSucceeds(getDoc(doc(student, COURSE_RESOURCE_ACCESS_PATH)));
-  await assertFails(getDoc(doc(unauthenticatedDb(), COURSE_RESOURCE_ACCESS_PATH)));
+  await assertFails(
+    getDoc(doc(unauthenticatedDb(), COURSE_RESOURCE_ACCESS_PATH)),
+  );
   await assertFails(getDoc(doc(ownerDb(), COURSE_RESOURCE_ACCESS_PATH)));
-  await assertFails(getDoc(doc(student, `${COURSE_RESOURCE_PATH}/access/alternate`)));
-  await assertFails(getDocs(collection(student, `${COURSE_RESOURCE_PATH}/access`)));
+  await assertFails(
+    getDoc(doc(student, `${COURSE_RESOURCE_PATH}/access/alternate`)),
+  );
+  await assertFails(
+    getDocs(collection(student, `${COURSE_RESOURCE_PATH}/access`)),
+  );
 });
 
 test("protected Course access denies every invalid Enrollment authority", async () => {
@@ -2091,8 +2166,12 @@ test("protected Course access denies every invalid Enrollment authority", async 
 
 test("protected Course access rejects malformed, mismatched, extra, and orphan documents", async () => {
   const invalidOverrides = [
-    { version: 2 }, { resourceId: "other-resource" }, { formatVersion: "ATV1" },
-    { ciphertextSha256: "b".repeat(64) }, { contentKey: "bad" }, { extra: true },
+    { version: 2 },
+    { resourceId: "other-resource" },
+    { formatVersion: "ATV1" },
+    { ciphertextSha256: "b".repeat(64) },
+    { contentKey: "bad" },
+    { extra: true },
   ];
   for (const overrides of invalidOverrides) {
     await testEnvironment.clearFirestore();
@@ -2101,18 +2180,23 @@ test("protected Course access rejects malformed, mismatched, extra, and orphan d
       [COURSE_RESOURCE_PATH]: protectedResourceMetadata(),
       [COURSE_RESOURCE_ACCESS_PATH]: protectedResourceAccess(overrides),
     });
-    await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), COURSE_RESOURCE_ACCESS_PATH)));
+    await assertFails(
+      getDoc(doc(authenticatedDb(CURRENT_UID), COURSE_RESOURCE_ACCESS_PATH)),
+    );
   }
   await testEnvironment.clearFirestore();
   await seedDocuments({
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
     [COURSE_RESOURCE_ACCESS_PATH]: protectedResourceAccess(),
   });
-  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), COURSE_RESOURCE_ACCESS_PATH)));
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), COURSE_RESOURCE_ACCESS_PATH)),
+  );
 });
 
 test("protected Session metadata and access require enrollment and a visible parent", async () => {
   await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
     [VIDEO_SESSION_PATH]: videoSession(),
     [SESSION_RESOURCE_PATH]: protectedResourceMetadata("session"),
@@ -2120,7 +2204,9 @@ test("protected Session metadata and access require enrollment and a visible par
   });
   const student = authenticatedDb(CURRENT_UID);
   await assertSucceeds(getDoc(doc(student, SESSION_RESOURCE_PATH)));
-  await assertSucceeds(getDocs(collection(student, `${VIDEO_SESSION_PATH}/resources`)));
+  await assertSucceeds(
+    getDocs(collection(student, `${VIDEO_SESSION_PATH}/resources`)),
+  );
   await assertSucceeds(getDoc(doc(student, SESSION_RESOURCE_ACCESS_PATH)));
   await assertSucceeds(getDoc(doc(ownerDb(), SESSION_RESOURCE_PATH)));
   await assertFails(getDoc(doc(ownerDb(), SESSION_RESOURCE_ACCESS_PATH)));
@@ -2174,6 +2260,7 @@ test("protected Session metadata and access succeed before and after release", a
   ]) {
     await testEnvironment.clearFirestore();
     await seedDocuments({
+      "courses/mechanics": courseDocument("mechanics", { status: "published" }),
       [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
       [VIDEO_SESSION_PATH]: parent,
       [SESSION_RESOURCE_PATH]: protectedResourceMetadata("session"),
@@ -2201,8 +2288,12 @@ test("protected Session resources reject draft, future, malformed, and missing p
     };
     if (parent) fixtures[VIDEO_SESSION_PATH] = parent;
     await seedDocuments(fixtures);
-    await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), SESSION_RESOURCE_PATH)));
-    await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), SESSION_RESOURCE_ACCESS_PATH)));
+    await assertFails(
+      getDoc(doc(authenticatedDb(CURRENT_UID), SESSION_RESOURCE_PATH)),
+    );
+    await assertFails(
+      getDoc(doc(authenticatedDb(CURRENT_UID), SESSION_RESOURCE_ACCESS_PATH)),
+    );
   }
 });
 
@@ -2215,15 +2306,16 @@ test("protected Session route mismatch fails closed", async () => {
     }),
     [SESSION_RESOURCE_ACCESS_PATH]: protectedResourceAccess(),
   });
-  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), SESSION_RESOURCE_PATH)));
-  await assertFails(getDoc(doc(authenticatedDb(CURRENT_UID), SESSION_RESOURCE_ACCESS_PATH)));
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), SESSION_RESOURCE_PATH)),
+  );
+  await assertFails(
+    getDoc(doc(authenticatedDb(CURRENT_UID), SESSION_RESOURCE_ACCESS_PATH)),
+  );
 });
 
 test("protected Session metadata identity and malformed parent metadata fail closed", async () => {
-  for (const overrides of [
-    { resourceId: "other-resource" },
-    { extra: true },
-  ]) {
+  for (const overrides of [{ resourceId: "other-resource" }, { extra: true }]) {
     await testEnvironment.clearFirestore();
     await seedDocuments({
       [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
@@ -2307,29 +2399,67 @@ test("all protected resource client writes and collection-group enumeration are 
       "course",
       { resourceId: "access-create" },
     ),
-    [`${VIDEO_SESSION_PATH}/resources/access-create`]: protectedResourceMetadata(
-      "session",
-      { resourceId: "access-create" },
-    ),
+    [`${VIDEO_SESSION_PATH}/resources/access-create`]:
+      protectedResourceMetadata("session", { resourceId: "access-create" }),
   });
   for (const db of [authenticatedDb(CURRENT_UID), ownerDb()]) {
-    await assertFails(setDoc(doc(db, "courses/mechanics/resources/new-resource"), protectedResourceMetadata("course", { resourceId: "new-resource" })));
-    await assertFails(updateDoc(doc(db, COURSE_RESOURCE_PATH), { title: "Changed" }));
+    await assertFails(
+      setDoc(
+        doc(db, "courses/mechanics/resources/new-resource"),
+        protectedResourceMetadata("course", { resourceId: "new-resource" }),
+      ),
+    );
+    await assertFails(
+      updateDoc(doc(db, COURSE_RESOURCE_PATH), { title: "Changed" }),
+    );
     await assertFails(deleteDoc(doc(db, COURSE_RESOURCE_PATH)));
-    await assertFails(setDoc(doc(db, "courses/mechanics/resources/access-create/access/primary"), protectedResourceAccess({ resourceId: "access-create" })));
-    await assertFails(updateDoc(doc(db, COURSE_RESOURCE_ACCESS_PATH), { contentKey: "E".repeat(43) }));
+    await assertFails(
+      setDoc(
+        doc(db, "courses/mechanics/resources/access-create/access/primary"),
+        protectedResourceAccess({ resourceId: "access-create" }),
+      ),
+    );
+    await assertFails(
+      updateDoc(doc(db, COURSE_RESOURCE_ACCESS_PATH), {
+        contentKey: "E".repeat(43),
+      }),
+    );
     await assertFails(deleteDoc(doc(db, COURSE_RESOURCE_ACCESS_PATH)));
-    await assertFails(setDoc(doc(db, `${VIDEO_SESSION_PATH}/resources/new-resource`), protectedResourceMetadata("session", { resourceId: "new-resource" })));
-    await assertFails(updateDoc(doc(db, SESSION_RESOURCE_PATH), { title: "Changed" }));
+    await assertFails(
+      setDoc(
+        doc(db, `${VIDEO_SESSION_PATH}/resources/new-resource`),
+        protectedResourceMetadata("session", { resourceId: "new-resource" }),
+      ),
+    );
+    await assertFails(
+      updateDoc(doc(db, SESSION_RESOURCE_PATH), { title: "Changed" }),
+    );
     await assertFails(deleteDoc(doc(db, SESSION_RESOURCE_PATH)));
-    await assertFails(setDoc(doc(db, `${VIDEO_SESSION_PATH}/resources/access-create/access/primary`), protectedResourceAccess({ resourceId: "access-create" })));
-    await assertFails(updateDoc(doc(db, SESSION_RESOURCE_ACCESS_PATH), { contentKey: "E".repeat(43) }));
+    await assertFails(
+      setDoc(
+        doc(db, `${VIDEO_SESSION_PATH}/resources/access-create/access/primary`),
+        protectedResourceAccess({ resourceId: "access-create" }),
+      ),
+    );
+    await assertFails(
+      updateDoc(doc(db, SESSION_RESOURCE_ACCESS_PATH), {
+        contentKey: "E".repeat(43),
+      }),
+    );
     await assertFails(deleteDoc(doc(db, SESSION_RESOURCE_ACCESS_PATH)));
-    await assertFails(getDocs(collection(db, `${COURSE_RESOURCE_PATH}/access`)));
-    await assertFails(getDocs(collection(db, `${SESSION_RESOURCE_PATH}/access`)));
+    await assertFails(
+      getDocs(collection(db, `${COURSE_RESOURCE_PATH}/access`)),
+    );
+    await assertFails(
+      getDocs(collection(db, `${SESSION_RESOURCE_PATH}/access`)),
+    );
   }
-  await assertFails(getDocs(collectionGroup(authenticatedDb(CURRENT_UID), "resources")));
-  await assertFails(getDocs(collectionGroup(authenticatedDb(CURRENT_UID), "access")));
+  await assertFails(
+    getDocs(collectionGroup(authenticatedDb(CURRENT_UID), "resources")),
+  );
+  await assertFails(
+    getDocs(collectionGroup(authenticatedDb(CURRENT_UID), "access")),
+  );
 });
 
 test("public Free Session discovery and exact released Session access are allowed without exposing paid discovery", async () => {
@@ -2340,10 +2470,27 @@ test("public Free Session discovery and exact released Session access are allowe
   await seedDocuments({
     [coursePath]: courseDocument("mechanics", { status: "published" }),
     [modulePath]: { title: "Motion", order: 1 },
-    [freePath]: { sessions: [{ id: "free-introduction", title: "Free Introduction", order: 1 }] },
-    [`${modulePath}/sessionDiscovery/visible`]: { sessionIds: ["free-introduction", "paid-session"] },
-    [freeSessionPath]: { title: "Free Introduction", order: 1, publicationStatus: "published", isFree: true, lessonText: "Public sample lesson." },
-    [`${modulePath}/sessions/paid-session`]: { title: "Paid", order: 2, publicationStatus: "published", isFree: false },
+    [freePath]: {
+      sessions: [
+        { id: "free-introduction", title: "Free Introduction", order: 1 },
+      ],
+    },
+    [`${modulePath}/sessionDiscovery/visible`]: {
+      sessionIds: ["free-introduction", "paid-session"],
+    },
+    [freeSessionPath]: {
+      title: "Free Introduction",
+      order: 1,
+      publicationStatus: "published",
+      isFree: true,
+      lessonText: "Public sample lesson.",
+    },
+    [`${modulePath}/sessions/paid-session`]: {
+      title: "Paid",
+      order: 2,
+      publicationStatus: "published",
+      isFree: false,
+    },
   });
   const db = unauthenticatedDb();
   await assertSucceeds(getDocs(collection(db, `${coursePath}/modules`)));
@@ -2358,21 +2505,47 @@ test("public Free Session discovery and exact released Session access are allowe
 test("Free Session access fails closed for absent false draft and future state while paid enrollment behavior remains unchanged", async () => {
   const base = "courses/mechanics/modules/motion/sessions";
   await seedDocuments({
-    [`${base}/absent`]: { title: "Absent", order: 0, publicationStatus: "published" },
-    [`${base}/false`]: { title: "False", order: 1, publicationStatus: "published", isFree: false },
-    [`${base}/draft`]: { title: "Draft", order: 2, publicationStatus: "draft", isFree: true },
-    [`${base}/future`]: { title: "Future", order: 3, publicationStatus: "published", isFree: true, releaseAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")) },
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
+    [`${base}/absent`]: {
+      title: "Absent",
+      order: 0,
+      publicationStatus: "published",
+    },
+    [`${base}/false`]: {
+      title: "False",
+      order: 1,
+      publicationStatus: "published",
+      isFree: false,
+    },
+    [`${base}/draft`]: {
+      title: "Draft",
+      order: 2,
+      publicationStatus: "draft",
+      isFree: true,
+    },
+    [`${base}/future`]: {
+      title: "Future",
+      order: 3,
+      publicationStatus: "published",
+      isFree: true,
+      releaseAt: Timestamp.fromDate(new Date("2100-01-01T00:00:00.000Z")),
+    },
     [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
   });
   for (const id of ["absent", "false", "draft", "future"]) {
     await assertFails(getDoc(doc(unauthenticatedDb(), `${base}/${id}`)));
   }
-  await assertFails(getDoc(doc(authenticatedDb("student-missing"), `${base}/false`)));
-  await assertSucceeds(getDoc(doc(authenticatedDb(CURRENT_UID), `${base}/false`)));
+  await assertFails(
+    getDoc(doc(authenticatedDb("student-missing"), `${base}/false`)),
+  );
+  await assertSucceeds(
+    getDoc(doc(authenticatedDb(CURRENT_UID), `${base}/false`)),
+  );
 });
 
 test("Free video permits only exact primary get while paid video and all protected PDFs retain enrollment authority", async () => {
-  const freeSessionPath = "courses/mechanics/modules/motion/sessions/free-video";
+  const freeSessionPath =
+    "courses/mechanics/modules/motion/sessions/free-video";
   const freeAccessPath = `${freeSessionPath}/videoAccess/primary`;
   await seedDocuments({
     "courses/mechanics": courseDocument("mechanics", { status: "published" }),
@@ -2380,17 +2553,25 @@ test("Free video permits only exact primary get while paid video and all protect
     [freeAccessPath]: videoAccess(),
     [VIDEO_SESSION_PATH]: videoSession({ isFree: false }),
     [VIDEO_ACCESS_PATH]: videoAccess(),
-    [`${freeSessionPath}/resources/${RESOURCE_ID}`]: protectedResourceMetadata("session", {
-      ciphertextRoute: `/protected-resources/courses/mechanics/modules/motion/sessions/free-video/resources/${RESOURCE_ID}.atr1`,
-    }),
-    [`${freeSessionPath}/resources/${RESOURCE_ID}/access/primary`]: protectedResourceAccess(),
+    [`${freeSessionPath}/resources/${RESOURCE_ID}`]: protectedResourceMetadata(
+      "session",
+      {
+        ciphertextRoute: `/protected-resources/courses/mechanics/modules/motion/sessions/free-video/resources/${RESOURCE_ID}.atr1`,
+      },
+    ),
+    [`${freeSessionPath}/resources/${RESOURCE_ID}/access/primary`]:
+      protectedResourceAccess(),
   });
   const db = unauthenticatedDb();
   await assertSucceeds(getDoc(doc(db, freeAccessPath)));
   await assertFails(getDocs(collection(db, `${freeSessionPath}/videoAccess`)));
   await assertFails(getDoc(doc(db, VIDEO_ACCESS_PATH)));
   await assertFails(getDocs(collection(db, `${freeSessionPath}/resources`)));
-  await assertFails(getDoc(doc(db, `${freeSessionPath}/resources/${RESOURCE_ID}/access/primary`)));
+  await assertFails(
+    getDoc(
+      doc(db, `${freeSessionPath}/resources/${RESOURCE_ID}/access/primary`),
+    ),
+  );
 });
 
 test("browsers cannot create or promote isFree through Firestore", async () => {
@@ -2399,12 +2580,151 @@ test("browsers cannot create or promote isFree through Firestore", async () => {
   await seedDocuments({
     "courses/mechanics": courseDocument("mechanics"),
     [modulePath]: { title: "Motion", order: 1 },
-    [sessionPath]: { title: "Existing", order: 0, publicationStatus: "draft", isFree: false },
+    [sessionPath]: {
+      title: "Existing",
+      order: 0,
+      publicationStatus: "draft",
+      isFree: false,
+    },
   });
   for (const db of [authenticatedDb(CURRENT_UID), ownerDb()]) {
     await assertFails(updateDoc(doc(db, sessionPath), { isFree: true }));
-    await assertFails(setDoc(doc(db, `${modulePath}/sessions/forged-free`), {
-      title: "Forged Free", order: 1, publicationStatus: "draft", isFree: true,
-    }));
+    await assertFails(
+      setDoc(doc(db, `${modulePath}/sessions/forged-free`), {
+        title: "Forged Free",
+        order: 1,
+        publicationStatus: "draft",
+        isFree: true,
+      }),
+    );
   }
+});
+
+test("Session closeAt is authoritative across paid Session video and Session PDF access", async () => {
+  const publishedCourse = courseDocument("mechanics", { status: "published" });
+  const base = {
+    "courses/mechanics": publishedCourse,
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [SESSION_RESOURCE_PATH]: protectedResourceMetadata("session"),
+    [SESSION_RESOURCE_ACCESS_PATH]: protectedResourceAccess(),
+  };
+  await seedDocuments({
+    ...base,
+    [VIDEO_SESSION_PATH]: videoSession({
+      releaseAt: Timestamp.fromMillis(Date.now() - 60_000),
+      closeAt: Timestamp.fromMillis(Date.now() + 60_000),
+    }),
+  });
+  let student = authenticatedDb(CURRENT_UID);
+  for (const path of [
+    VIDEO_SESSION_PATH,
+    VIDEO_ACCESS_PATH,
+    SESSION_RESOURCE_PATH,
+    SESSION_RESOURCE_ACCESS_PATH,
+  ]) {
+    await assertSucceeds(getDoc(doc(student, path)));
+  }
+
+  for (const closeAt of [
+    Timestamp.fromMillis(Date.now()),
+    Timestamp.fromMillis(Date.now() - 60_000),
+  ]) {
+    await testEnvironment.clearFirestore();
+    await seedDocuments({
+      ...base,
+      [VIDEO_SESSION_PATH]: videoSession({
+        releaseAt: Timestamp.fromMillis(Date.now() - 120_000),
+        closeAt,
+      }),
+    });
+    student = authenticatedDb(CURRENT_UID);
+    for (const path of [
+      VIDEO_SESSION_PATH,
+      VIDEO_ACCESS_PATH,
+      SESSION_RESOURCE_PATH,
+      SESSION_RESOURCE_ACCESS_PATH,
+    ]) {
+      try {
+        await assertFails(getDoc(doc(student, path)));
+      } catch (error) {
+        throw new Error(`Closed lifecycle unexpectedly allowed ${path}.`, {
+          cause: error,
+        });
+      }
+    }
+  }
+});
+
+test("Session lifecycle values fail closed while missing closeAt preserves legacy access", async () => {
+  const path = VIDEO_SESSION_PATH;
+  const student = authenticatedDb(CURRENT_UID);
+  const common = {
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+  };
+  await seedDocuments({ ...common, [path]: videoSession() });
+  await assertSucceeds(getDoc(doc(student, path)));
+  for (const lifecycle of [
+    { closeAt: null },
+    { closeAt: "2100-01-01T00:00:00.000Z" },
+    { closeAt: 1 },
+    { closeAt: {} },
+    {
+      releaseAt: Timestamp.fromMillis(2_000),
+      closeAt: Timestamp.fromMillis(2_000),
+    },
+    {
+      releaseAt: Timestamp.fromMillis(3_000),
+      closeAt: Timestamp.fromMillis(2_000),
+    },
+  ]) {
+    await testEnvironment.clearFirestore();
+    await seedDocuments({ ...common, [path]: videoSession(lifecycle) });
+    await assertFails(getDoc(doc(student, path)));
+  }
+});
+
+test("unpublished Course and stale discovery cannot bypass Session lifecycle authority", async () => {
+  const discovery = "courses/mechanics/modules/motion/sessionDiscovery/visible";
+  const closed = videoSession({
+    closeAt: Timestamp.fromMillis(Date.now() - 1_000),
+  });
+  await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "draft" }),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+    [discovery]: { sessionIds: ["introduction"] },
+    [VIDEO_SESSION_PATH]: closed,
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+  });
+  const student = authenticatedDb(CURRENT_UID);
+  await assertFails(getDoc(doc(student, discovery)));
+  await assertFails(getDoc(doc(student, VIDEO_SESSION_PATH)));
+  await assertFails(getDoc(doc(student, VIDEO_ACCESS_PATH)));
+  await assertSucceeds(
+    getDoc(doc(student, `enrollments/${CURRENT_UID}_mechanics`)),
+  );
+});
+
+test("free status never overrides closeAt and Course resources do not inherit Session closure", async () => {
+  await seedDocuments({
+    "courses/mechanics": courseDocument("mechanics", { status: "published" }),
+    [`enrollments/${CURRENT_UID}_mechanics`]: enrollment(CURRENT_UID),
+    [VIDEO_SESSION_PATH]: videoSession({
+      isFree: true,
+      closeAt: Timestamp.fromMillis(Date.now() - 1_000),
+    }),
+    [VIDEO_ACCESS_PATH]: videoAccess(),
+    [COURSE_RESOURCE_PATH]: protectedResourceMetadata(),
+    [COURSE_RESOURCE_ACCESS_PATH]: protectedResourceAccess(),
+  });
+  await assertFails(getDoc(doc(unauthenticatedDb(), VIDEO_SESSION_PATH)));
+  await assertFails(getDoc(doc(unauthenticatedDb(), VIDEO_ACCESS_PATH)));
+  await assertSucceeds(
+    getDoc(doc(authenticatedDb(CURRENT_UID), COURSE_RESOURCE_PATH)),
+  );
+  await assertSucceeds(
+    getDoc(doc(authenticatedDb(CURRENT_UID), COURSE_RESOURCE_ACCESS_PATH)),
+  );
+  await assertFails(getDoc(doc(ownerDb(), VIDEO_ACCESS_PATH)));
 });

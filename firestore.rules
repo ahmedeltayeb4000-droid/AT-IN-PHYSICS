@@ -30,6 +30,11 @@ service cloud.firestore {
       return request.auth != null && hasActiveEnrollment(courseId);
     }
 
+    function canReadPublishedCourseContent(courseId) {
+      return canReadCourseContent(courseId)
+        && isPublishedTrustedCourse(courseId);
+    }
+
     function isOwner() {
       return request.auth != null
         && request.auth.token.keys().hasAny(["owner"])
@@ -230,7 +235,7 @@ service cloud.firestore {
         && (!data.keys().hasAny(["isFree"]) || data.isFree == false);
     }
 
-    function isSessionVisible(sessionData) {
+    function isSessionAvailable(sessionData) {
       return sessionData.keys().hasAll(["publicationStatus"])
         && sessionData.publicationStatus == "published"
         && (
@@ -239,6 +244,17 @@ service cloud.firestore {
             sessionData.releaseAt is timestamp
             && sessionData.releaseAt <= request.time
           )
+        )
+        && (
+          !sessionData.keys().hasAny(["closeAt"])
+          || (
+            sessionData.closeAt is timestamp
+            && request.time < sessionData.closeAt
+            && (
+              !sessionData.keys().hasAny(["releaseAt"])
+              || sessionData.releaseAt < sessionData.closeAt
+            )
+          )
         );
     }
 
@@ -246,7 +262,7 @@ service cloud.firestore {
       return isPublishedTrustedCourse(courseId)
         && sessionData.keys().hasAll(["isFree"])
         && sessionData.isFree == true
-        && isSessionVisible(sessionData);
+        && isSessionAvailable(sessionData);
     }
 
     function isFreeSessionDiscoveryManifest() {
@@ -360,18 +376,18 @@ service cloud.firestore {
       allow update, delete: if false;
 
       match /resources/{resourceId} {
-        allow get: if (canReadCourseContent(courseId) || isOwner())
+        allow get: if (canReadPublishedCourseContent(courseId) || isOwner())
           && isValidProtectedResourceMetadata(
             resource.data,
             resourceId,
             "/protected-resources/courses/" + courseId + "/resources/" + resourceId + ".atr1"
           );
-        allow list: if canReadCourseContent(courseId) || isOwner();
+        allow list: if canReadPublishedCourseContent(courseId) || isOwner();
         allow create, update, delete: if false;
 
         match /access/{accessId} {
           allow get: if accessId == "primary"
-            && canReadCourseContent(courseId)
+            && canReadPublishedCourseContent(courseId)
             && !isOwner()
             && exists(/databases/$(database)/documents/courses/$(courseId)/resources/$(resourceId))
             && isValidProtectedResourceMetadata(
@@ -389,14 +405,14 @@ service cloud.firestore {
       }
 
       match /modules/{moduleId} {
-        allow get: if canReadCourseContent(courseId) || isPublishedTrustedCourse(courseId) || isOwner();
-        allow list: if canReadCourseContent(courseId) || isPublishedTrustedCourse(courseId) || isOwner();
+        allow get: if canReadPublishedCourseContent(courseId) || isPublishedTrustedCourse(courseId) || isOwner();
+        allow list: if canReadPublishedCourseContent(courseId) || isPublishedTrustedCourse(courseId) || isOwner();
         allow create: if isOwner() && isValidCreatedModule(courseId, moduleId);
         allow update, delete: if false;
 
         match /sessionDiscovery/{discoveryId} {
           allow get: if discoveryId == "visible"
-            && canReadCourseContent(courseId)
+            && canReadPublishedCourseContent(courseId)
             && isSessionDiscoveryManifest()
             || discoveryId == "free"
             && isPublishedTrustedCourse(courseId)
@@ -406,8 +422,8 @@ service cloud.firestore {
 
         match /sessions/{sessionId} {
           allow get: if (
-              (canReadCourseContent(courseId) || isPublicFreeSession(courseId, resource.data))
-              && isSessionVisible(resource.data)
+              (canReadPublishedCourseContent(courseId) || isPublicFreeSession(courseId, resource.data))
+              && isSessionAvailable(resource.data)
             ) || isOwner();
           allow list: if isOwner();
           allow create: if isOwner()
@@ -417,9 +433,9 @@ service cloud.firestore {
           match /resources/{resourceId} {
             allow get: if (
                 (
-                  canReadCourseContent(courseId)
+                  canReadPublishedCourseContent(courseId)
                   && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
-                  && isSessionVisible(
+                  && isSessionAvailable(
                     get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data
                   )
                 ) || isOwner()
@@ -430,9 +446,9 @@ service cloud.firestore {
                 "/protected-resources/courses/" + courseId + "/modules/" + moduleId + "/sessions/" + sessionId + "/resources/" + resourceId + ".atr1"
               );
             allow list: if (
-                canReadCourseContent(courseId)
+                canReadPublishedCourseContent(courseId)
                 && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
-                && isSessionVisible(
+                && isSessionAvailable(
                   get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data
                 )
               ) || isOwner();
@@ -440,10 +456,10 @@ service cloud.firestore {
 
             match /access/{accessId} {
               allow get: if accessId == "primary"
-                && canReadCourseContent(courseId)
+                && canReadPublishedCourseContent(courseId)
                 && !isOwner()
                 && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
-                && isSessionVisible(
+                && isSessionAvailable(
                   get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data
                 )
                 && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)/resources/$(resourceId))
@@ -464,7 +480,7 @@ service cloud.firestore {
           match /videoAccess/{accessId} {
             allow get: if accessId == "primary"
               && (
-                canReadCourseContent(courseId)
+                canReadPublishedCourseContent(courseId)
                 || (
                   exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
                   && isPublicFreeSession(
@@ -474,7 +490,7 @@ service cloud.firestore {
                 )
               )
               && exists(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId))
-              && isSessionVisible(
+              && isSessionAvailable(
                 get(/databases/$(database)/documents/courses/$(courseId)/modules/$(moduleId)/sessions/$(sessionId)).data
               )
               && isVideoAccessDocument(

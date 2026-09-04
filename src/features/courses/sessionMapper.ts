@@ -39,7 +39,11 @@ export function mapSessionDocument(
 
   const data = value as Record<string, unknown>;
   const hasReleaseAt = Object.prototype.hasOwnProperty.call(data, "releaseAt");
-  const hasLessonText = Object.prototype.hasOwnProperty.call(data, "lessonText");
+  const hasCloseAt = Object.prototype.hasOwnProperty.call(data, "closeAt");
+  const hasLessonText = Object.prototype.hasOwnProperty.call(
+    data,
+    "lessonText",
+  );
   const hasVideoAssetId = Object.prototype.hasOwnProperty.call(
     data,
     "videoAssetId",
@@ -54,6 +58,11 @@ export function mapSessionDocument(
     (data.publicationStatus !== "draft" &&
       data.publicationStatus !== "published") ||
     (hasReleaseAt && !(data.releaseAt instanceof Timestamp)) ||
+    (hasCloseAt && !(data.closeAt instanceof Timestamp)) ||
+    (hasReleaseAt &&
+      hasCloseAt &&
+      (data.closeAt as Timestamp).toMillis() <=
+        (data.releaseAt as Timestamp).toMillis()) ||
     (hasLessonText && !isValidLessonText(data.lessonText)) ||
     (hasVideoAssetId && !isValidVideoAssetId(data.videoAssetId)) ||
     (hasIsFree && typeof data.isFree !== "boolean")
@@ -71,6 +80,9 @@ export function mapSessionDocument(
     isFree: data.isFree === true,
     ...(data.releaseAt instanceof Timestamp
       ? { releaseAt: data.releaseAt.toDate().toISOString() }
+      : {}),
+    ...(data.closeAt instanceof Timestamp
+      ? { closeAt: data.closeAt.toDate().toISOString() }
       : {}),
     ...(hasLessonText ? { lessonText: data.lessonText as string } : {}),
     ...(hasVideoAssetId ? { videoAssetId: data.videoAssetId as string } : {}),

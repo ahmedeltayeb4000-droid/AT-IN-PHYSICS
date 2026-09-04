@@ -74,7 +74,10 @@ import {
   type OwnerVerifiedDeployment,
 } from "./videoBinding.js";
 import { recoverOwnerExistingDeployment } from "./videoRecovery.js";
-import { createAccessCode, type GenerateAccessCodeResult } from "../accessCodes/accessCodes.js";
+import {
+  createAccessCode,
+  type GenerateAccessCodeResult,
+} from "../accessCodes/accessCodes.js";
 import { PROTECTED_RESOURCE_MAX_PLAINTEXT_SIZE } from "../protectedResources/format.js";
 import { RESOURCE_CLIENT_JS } from "./resourceClient.js";
 import {
@@ -135,6 +138,14 @@ import { ACCESS_CODE_MANAGEMENT_CLIENT_JS } from "./accessCodeManagementClient.j
 import { OWNER_CONSOLE_CSS, OWNER_CONSOLE_POLISH_JS } from "./polish.js";
 import { PROTECTED_CONTENT_CLIENT_JS } from "./protectedContentClient.js";
 import { SESSION_EMERGENCY_CLIENT_JS } from "./sessionEmergencyClient.js";
+import { SESSION_AVAILABILITY_CLIENT_JS } from "./sessionAvailabilityClient.js";
+import {
+  SESSION_AVAILABILITY_CONFIRMATION,
+  applySessionAvailability,
+  reviewSessionAvailability,
+  safeSessionAvailabilityReview,
+  type SessionAvailabilityReview,
+} from "./sessionAvailability.js";
 import {
   SESSION_EMERGENCY_CONFIRMATION,
   applySessionEmergencyWithdrawal,
@@ -223,6 +234,8 @@ export type OwnerConsoleDependencies = Readonly<{
   applyAccessCodeRevocation?: typeof applyAccessCodeRevocation;
   reviewSessionEmergency?: typeof reviewSessionEmergencyWithdrawal;
   applySessionEmergency?: typeof applySessionEmergencyWithdrawal;
+  reviewSessionAvailability?: typeof reviewSessionAvailability;
+  applySessionAvailability?: typeof applySessionAvailability;
 }>;
 
 type Review = {
@@ -316,14 +329,19 @@ async function videoBody(req: IncomingMessage): Promise<Buffer> {
 
 async function pdfBody(req: IncomingMessage): Promise<Buffer> {
   const declared = Number(req.headers["content-length"]);
-  if (!Number.isSafeInteger(declared) || declared <= 0 || declared > PROTECTED_RESOURCE_MAX_PLAINTEXT_SIZE)
+  if (
+    !Number.isSafeInteger(declared) ||
+    declared <= 0 ||
+    declared > PROTECTED_RESOURCE_MAX_PLAINTEXT_SIZE
+  )
     throw new Error("PDF upload size is invalid.");
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const bytes = Buffer.from(chunk);
     size += bytes.length;
-    if (size > PROTECTED_RESOURCE_MAX_PLAINTEXT_SIZE) throw new Error("PDF upload is too large.");
+    if (size > PROTECTED_RESOURCE_MAX_PLAINTEXT_SIZE)
+      throw new Error("PDF upload is too large.");
     chunks.push(bytes);
   }
   if (size !== declared) throw new Error("PDF upload was incomplete.");
@@ -357,8 +375,14 @@ export function requireExpectedTarget(
     moduleId: validateCourseId(input.expectedModuleId),
     sessionId: validateCourseId(input.expectedSessionId),
   };
-  if (expected.courseId !== trusted.courseId || expected.moduleId !== trusted.moduleId || expected.sessionId !== trusted.sessionId)
-    throw new Error("The verified deployment target does not match the managed Session.");
+  if (
+    expected.courseId !== trusted.courseId ||
+    expected.moduleId !== trusted.moduleId ||
+    expected.sessionId !== trusted.sessionId
+  )
+    throw new Error(
+      "The verified deployment target does not match the managed Session.",
+    );
 }
 
 export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
@@ -382,42 +406,71 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const deployHosting = deps.deployHosting ?? executeOwnerHostingDeployment;
   const retryRemoteVerification =
     deps.retryRemoteVerification ?? retryOwnerRemoteVerification;
-  const createBindingReview = deps.createBindingReview ?? createOwnerBindingReview;
+  const createBindingReview =
+    deps.createBindingReview ?? createOwnerBindingReview;
   const applyBindingReview = deps.applyBindingReview ?? applyOwnerBindingReview;
   const recoverExistingDeployment =
     deps.recoverExistingDeployment ?? recoverOwnerExistingDeployment;
   const generateAccessCode = deps.generateAccessCode ?? createAccessCode;
   const prepareResource = deps.prepareResource ?? prepareOwnerSessionResource;
-  const prepareResourceRelease = deps.prepareResourceRelease ?? prepareOwnerResourceRelease;
-  const preflightResourceRelease = deps.preflightResourceRelease ?? preflightOwnerResourceRelease;
-  const createResourceDeployReview = deps.createResourceDeployReview ?? createOwnerResourceDeployReview;
+  const prepareResourceRelease =
+    deps.prepareResourceRelease ?? prepareOwnerResourceRelease;
+  const preflightResourceRelease =
+    deps.preflightResourceRelease ?? preflightOwnerResourceRelease;
+  const createResourceDeployReview =
+    deps.createResourceDeployReview ?? createOwnerResourceDeployReview;
   const deployResource = deps.deployResource ?? deployOwnerResource;
-  const retryResourceVerification = deps.retryResourceVerification ?? retryOwnerResourceVerification;
-  const createResourceBindingReview = deps.createResourceBindingReview ?? createOwnerResourceBindingReview;
-  const applyResourceBinding = deps.applyResourceBinding ?? applyOwnerResourceBinding;
+  const retryResourceVerification =
+    deps.retryResourceVerification ?? retryOwnerResourceVerification;
+  const createResourceBindingReview =
+    deps.createResourceBindingReview ?? createOwnerResourceBindingReview;
+  const applyResourceBinding =
+    deps.applyResourceBinding ?? applyOwnerResourceBinding;
   const reviewFreeStatus = deps.reviewFreeStatus ?? reviewSessionFreeStatus;
   const applyFreeStatus = deps.applyFreeStatus ?? applySessionFreeStatus;
   const reviewCourse = deps.reviewCoursePublication ?? reviewCoursePublication;
   const applyCourse = deps.applyCoursePublication ?? applyCoursePublication;
-  const readEnrollments = deps.readEnrollmentInventory ?? readEnrollmentInventory;
+  const readEnrollments =
+    deps.readEnrollmentInventory ?? readEnrollmentInventory;
   const inspectManagedEnrollment = deps.inspectEnrollment ?? inspectEnrollment;
-  const reviewEnrollmentState = deps.reviewEnrollmentStatus ?? reviewEnrollmentStatus;
-  const reviewEnrollmentExpiry = deps.reviewEnrollmentExtension ?? reviewEnrollmentExtension;
-  const applyManagedEnrollment = deps.applyEnrollmentReview ?? applyEnrollmentReview;
-  const readManagedAccessCodes = deps.readAccessCodeInventory ?? readAccessCodeInventory;
+  const reviewEnrollmentState =
+    deps.reviewEnrollmentStatus ?? reviewEnrollmentStatus;
+  const reviewEnrollmentExpiry =
+    deps.reviewEnrollmentExtension ?? reviewEnrollmentExtension;
+  const applyManagedEnrollment =
+    deps.applyEnrollmentReview ?? applyEnrollmentReview;
+  const readManagedAccessCodes =
+    deps.readAccessCodeInventory ?? readAccessCodeInventory;
   const inspectManagedAccessCode = deps.inspectAccessCode ?? inspectAccessCode;
-  const reviewManagedAccessCode = deps.reviewAccessCodeRevocation ?? reviewAccessCodeRevocation;
-  const applyManagedAccessCode = deps.applyAccessCodeRevocation ?? applyAccessCodeRevocation;
-  const reviewEmergency = deps.reviewSessionEmergency ?? reviewSessionEmergencyWithdrawal;
-  const applyEmergency = deps.applySessionEmergency ?? applySessionEmergencyWithdrawal;
-  const freeStatusReviews = new Map<string, { review: SessionFreeStatusReview; used: boolean }>();
+  const reviewManagedAccessCode =
+    deps.reviewAccessCodeRevocation ?? reviewAccessCodeRevocation;
+  const applyManagedAccessCode =
+    deps.applyAccessCodeRevocation ?? applyAccessCodeRevocation;
+  const reviewEmergency =
+    deps.reviewSessionEmergency ?? reviewSessionEmergencyWithdrawal;
+  const applyEmergency =
+    deps.applySessionEmergency ?? applySessionEmergencyWithdrawal;
+  const reviewAvailability =
+    deps.reviewSessionAvailability ?? reviewSessionAvailability;
+  const applyAvailability =
+    deps.applySessionAvailability ?? applySessionAvailability;
+  const freeStatusReviews = new Map<
+    string,
+    { review: SessionFreeStatusReview; used: boolean }
+  >();
   const coursePublicationReviews = new Map<
     string,
     { review: CoursePublicationReview; used: boolean }
   >();
-  const enrollmentReviews = new Map<string, { review: EnrollmentReview; used: boolean }>();
+  const enrollmentReviews = new Map<
+    string,
+    { review: EnrollmentReview; used: boolean }
+  >();
   const accessCodeHandles: AccessCodeHandleRegistry = new Map();
-  const accessCodeReviews = new Map<string, { review: AccessCodeReview; used: boolean }>();
+  const accessCodeReviews = new Map<
+    string,
+    { review: AccessCodeReview; used: boolean }
+  >();
   const preparedVideos = new Map<string, OwnerPreparedVideo>();
   const videoReleases = new Map<string, OwnerReleaseReview>();
   const preflightedVideoReleases = new Set<string>();
@@ -427,19 +480,38 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   >();
   const deployedVideoReleases = new Map<string, OwnerDeployReview>();
   const verifiedDeployments = new Map<string, OwnerVerifiedDeployment>();
-  const bindingReviews = new Map<string, { review: OwnerBindingReview; used: boolean }>();
+  const bindingReviews = new Map<
+    string,
+    { review: OwnerBindingReview; used: boolean }
+  >();
   const preparedResources = new Map<string, OwnerPreparedResource>();
   const resourceReleases = new Map<string, OwnerResourceRelease>();
   const preflightedResourceReleases = new Set<string>();
-  const resourceDeployReviews = new Map<string, { review: OwnerResourceDeployReview; used: boolean }>();
+  const resourceDeployReviews = new Map<
+    string,
+    { review: OwnerResourceDeployReview; used: boolean }
+  >();
   const deployedResourceReleases = new Map<string, OwnerResourceDeployReview>();
-  const verifiedResourceDeployments = new Map<string, OwnerVerifiedResourceDeployment>();
-  const resourceBindingReviews = new Map<string, { review: OwnerResourceBindingReview; used: boolean }>();
+  const verifiedResourceDeployments = new Map<
+    string,
+    OwnerVerifiedResourceDeployment
+  >();
+  const resourceBindingReviews = new Map<
+    string,
+    { review: OwnerResourceBindingReview; used: boolean }
+  >();
   const videoReplaceReviews = new LifecycleReviewRegistry<VideoReplaceReview>();
   const videoUnbindReviews = new LifecycleReviewRegistry<VideoUnbindReview>();
-  const resourceReplaceReviews = new LifecycleReviewRegistry<ResourceReplaceReview>();
-  const resourceRemoveReviews = new LifecycleReviewRegistry<ResourceRemoveReview>();
-  const sessionEmergencyReviews = new LifecycleReviewRegistry<SessionEmergencyReview>();
+  const resourceReplaceReviews =
+    new LifecycleReviewRegistry<ResourceReplaceReview>();
+  const resourceRemoveReviews =
+    new LifecycleReviewRegistry<ResourceRemoveReview>();
+  const sessionEmergencyReviews =
+    new LifecycleReviewRegistry<SessionEmergencyReview>();
+  const sessionAvailabilityReviews = new Map<
+    string,
+    { review: SessionAvailabilityReview; used: boolean }
+  >();
   const server = createServer(async (req, res) => {
     const address = server.address() as AddressInfo | null;
     const origin = `http://${OWNER_CONSOLE_HOST}:${address?.port ?? OWNER_CONSOLE_DEFAULT_PORT}`;
@@ -459,9 +531,17 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "set-cookie":
             "owner-control=active; HttpOnly; SameSite=Strict; Path=/",
         });
-        return res.end(renderOwnerConsole(deps.projectId)
-          .replace("</head>", '<link rel="stylesheet" href="/styles.css"></head>')
-          .replace("</body>", '<script src="/polish.js" defer></script></body>'));
+        return res.end(
+          renderOwnerConsole(deps.projectId)
+            .replace(
+              "</head>",
+              '<link rel="stylesheet" href="/styles.css"></head>',
+            )
+            .replace(
+              "</body>",
+              '<script src="/polish.js" defer></script></body>',
+            ),
+        );
       }
       if (req.method === "GET" && url.pathname === "/app.js") {
         res.writeHead(200, {
@@ -469,15 +549,21 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           "content-type": "text/javascript; charset=utf-8",
         });
         return res.end(
-          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${SESSION_EMERGENCY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_CLIENT_JS.replace("button.textContent='Protected Content'", "button.textContent='Operational details'").replace("catch(e){showError(e)}}async function enhanceProtectedActions", "catch(e){msg.textContent='Requires attention: protected-content details could not be verified.'}}async function enhanceProtectedActions").replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_TARGET_BINDING_JS}\n${LEGACY_VIDEO_BIND_CREATE_ONLY_CLIENT_JS}\n${ACCESS_CODE_CLIENT_JS}\n${ACCESS_CODE_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
+          `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${SESSION_AVAILABILITY_CLIENT_JS.replaceAll("\n", "\\n")}\n${SESSION_EMERGENCY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_CLIENT_JS.replace("button.textContent='Protected Content'", "button.textContent='Operational details'").replace("catch(e){showError(e)}}async function enhanceProtectedActions", "catch(e){msg.textContent='Requires attention: protected-content details could not be verified.'}}async function enhanceProtectedActions").replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_TARGET_BINDING_JS}\n${LEGACY_VIDEO_BIND_CREATE_ONLY_CLIENT_JS}\n${ACCESS_CODE_CLIENT_JS}\n${ACCESS_CODE_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
         );
       }
       if (req.method === "GET" && url.pathname === "/polish.js") {
-        res.writeHead(200, { ...JSON_HEADERS, "content-type": "text/javascript; charset=utf-8" });
+        res.writeHead(200, {
+          ...JSON_HEADERS,
+          "content-type": "text/javascript; charset=utf-8",
+        });
         return res.end(OWNER_CONSOLE_POLISH_JS);
       }
       if (req.method === "GET" && url.pathname === "/styles.css") {
-        res.writeHead(200, { ...JSON_HEADERS, "content-type": "text/css; charset=utf-8" });
+        res.writeHead(200, {
+          ...JSON_HEADERS,
+          "content-type": "text/css; charset=utf-8",
+        });
         return res.end(OWNER_CONSOLE_CSS);
       }
       if (req.method === "GET" && url.pathname === "/api/bootstrap")
@@ -485,24 +571,39 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
       if (req.method === "GET" && url.pathname === "/api/courses") {
         await authorize(deps.auth, deps.ownerUid);
         const inventory = await readOwnerCourses(deps.db);
-        return send(res, 200, { courses: inventory.items, limit: inventory.limit, truncated: inventory.truncated, malformedCount: inventory.malformedCount });
+        return send(res, 200, {
+          courses: inventory.items,
+          limit: inventory.limit,
+          truncated: inventory.truncated,
+          malformedCount: inventory.malformedCount,
+        });
       }
       if (req.method === "GET" && url.pathname === "/api/modules") {
         await authorize(deps.auth, deps.ownerUid);
         const inventory = await readOwnerModules(
-            deps.db,
-            url.searchParams.get("courseId") ?? "",
-          );
-        return send(res, 200, { modules: inventory.items, limit: inventory.limit, truncated: inventory.truncated, malformedCount: inventory.malformedCount });
+          deps.db,
+          url.searchParams.get("courseId") ?? "",
+        );
+        return send(res, 200, {
+          modules: inventory.items,
+          limit: inventory.limit,
+          truncated: inventory.truncated,
+          malformedCount: inventory.malformedCount,
+        });
       }
       if (req.method === "GET" && url.pathname === "/api/sessions") {
         await authorize(deps.auth, deps.ownerUid);
         const inventory = await readOwnerSessions(
-            deps.db,
-            url.searchParams.get("courseId") ?? "",
-            url.searchParams.get("moduleId") ?? "",
-          );
-        return send(res, 200, { sessions: inventory.items, limit: inventory.limit, truncated: inventory.truncated, malformedCount: inventory.malformedCount });
+          deps.db,
+          url.searchParams.get("courseId") ?? "",
+          url.searchParams.get("moduleId") ?? "",
+        );
+        return send(res, 200, {
+          sessions: inventory.items,
+          limit: inventory.limit,
+          truncated: inventory.truncated,
+          malformedCount: inventory.malformedCount,
+        });
       }
       if (req.method === "GET" && url.pathname === "/api/lesson") {
         await authorize(deps.auth, deps.ownerUid);
@@ -571,27 +672,46 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           return send(res, 200, { preparationId, preparation: summary });
         }
         if (url.pathname === "/api/resource/session/prepare") {
-          if (req.headers["content-type"] !== "application/pdf") return fail(res, 415);
-          const expectedQuery = ["courseId", "moduleId", "sessionId", "resourceId", "title"];
-          if ([...url.searchParams.keys()].sort().join("|") !== [...expectedQuery].sort().join("|")) return fail(res, 400);
+          if (req.headers["content-type"] !== "application/pdf")
+            return fail(res, 415);
+          const expectedQuery = [
+            "courseId",
+            "moduleId",
+            "sessionId",
+            "resourceId",
+            "title",
+          ];
+          if (
+            [...url.searchParams.keys()].sort().join("|") !==
+            [...expectedQuery].sort().join("|")
+          )
+            return fail(res, 400);
           await authorize(deps.auth, deps.ownerUid);
           let originalFileName: string;
           try {
-            originalFileName = decodeURIComponent(typeof req.headers["x-resource-file-name"] === "string" ? req.headers["x-resource-file-name"] : "");
+            originalFileName = decodeURIComponent(
+              typeof req.headers["x-resource-file-name"] === "string"
+                ? req.headers["x-resource-file-name"]
+                : "",
+            );
           } catch {
             return fail(res, 400);
           }
           const preparationId = randomBytes(24).toString("base64url");
-          const prepared = await prepareResource(deps.db, {
-            courseId: validateCourseId(url.searchParams.get("courseId")),
-            moduleId: validateCourseId(url.searchParams.get("moduleId")),
-            sessionId: validateCourseId(url.searchParams.get("sessionId")),
-            resourceId: requiredString(url.searchParams.get("resourceId")),
-            title: requiredString(url.searchParams.get("title")),
-            originalFileName,
-            mimeType: "application/pdf",
-            bytes: await pdfBody(req),
-          }, preparationId);
+          const prepared = await prepareResource(
+            deps.db,
+            {
+              courseId: validateCourseId(url.searchParams.get("courseId")),
+              moduleId: validateCourseId(url.searchParams.get("moduleId")),
+              sessionId: validateCourseId(url.searchParams.get("sessionId")),
+              resourceId: requiredString(url.searchParams.get("resourceId")),
+              title: requiredString(url.searchParams.get("title")),
+              originalFileName,
+              mimeType: "application/pdf",
+              bytes: await pdfBody(req),
+            },
+            preparationId,
+          );
           preparedResources.set(preparationId, prepared);
           return send(res, 200, { preparationId, preparation: prepared.safe });
         }
@@ -601,14 +721,71 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         )
           return fail(res, 415);
         const input = await body(req);
+        if (url.pathname === "/api/sessions/availability/review") {
+          exactInput(input, [
+            "courseId",
+            "moduleId",
+            "sessionId",
+            "releaseAt",
+            "closeAt",
+          ]);
+          await authorize(deps.auth, deps.ownerUid);
+          const review = await reviewAvailability(
+            deps.db,
+            {
+              courseId: validateCourseId(input.courseId),
+              moduleId: validateCourseId(input.moduleId),
+              sessionId: validateCourseId(input.sessionId),
+            },
+            input.releaseAt,
+            input.closeAt,
+          );
+          const reviewId = randomBytes(24).toString("base64url");
+          sessionAvailabilityReviews.set(reviewId, { review, used: false });
+          return send(res, 200, {
+            reviewId,
+            review: safeSessionAvailabilityReview(review, now()),
+          });
+        }
+        if (url.pathname === "/api/sessions/availability/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const reviewId = requiredString(input.reviewId);
+          const record = sessionAvailabilityReviews.get(reviewId);
+          if (!record || record.used) return fail(res, 409);
+          if (
+            (record.review.publicationStatus === "published" &&
+              input.confirmation !== SESSION_AVAILABILITY_CONFIRMATION) ||
+            (record.review.publicationStatus === "draft" &&
+              input.confirmation !== "")
+          )
+            return fail(res, 400);
+          record.used = true;
+          try {
+            const result = await applyAvailability(
+              deps.db,
+              record.review,
+              now(),
+            );
+            sessionAvailabilityReviews.delete(reviewId);
+            return send(res, 200, { result });
+          } catch (error) {
+            record.used = false;
+            throw error;
+          }
+        }
         if (url.pathname === "/api/sessions/emergency/review") {
           exactInput(input, ["courseId", "moduleId", "sessionId"]);
           await authorize(deps.auth, deps.ownerUid);
-          const review = await reviewEmergency(deps.db, {
-            courseId: validateCourseId(input.courseId),
-            moduleId: validateCourseId(input.moduleId),
-            sessionId: validateCourseId(input.sessionId),
-          }, now());
+          const review = await reviewEmergency(
+            deps.db,
+            {
+              courseId: validateCourseId(input.courseId),
+              moduleId: validateCourseId(input.moduleId),
+              sessionId: validateCourseId(input.sessionId),
+            },
+            now(),
+          );
           const reviewId = randomBytes(24).toString("base64url");
           sessionEmergencyReviews.add(reviewId, review);
           return send(res, 200, { reviewId, review: review.safe });
@@ -616,7 +793,11 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         if (url.pathname === "/api/sessions/emergency/apply") {
           exactInput(input, ["reviewId", "confirmation"]);
           await authorize(deps.auth, deps.ownerUid);
-          if (requiredString(input.confirmation) !== SESSION_EMERGENCY_CONFIRMATION) return fail(res, 400);
+          if (
+            requiredString(input.confirmation) !==
+            SESSION_EMERGENCY_CONFIRMATION
+          )
+            return fail(res, 400);
           const result = await runLifecycleReview(
             sessionEmergencyReviews,
             requiredString(input.reviewId),
@@ -628,19 +809,33 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         if (url.pathname === "/api/protected-content/session/inventory") {
           exactInput(input, ["courseId", "moduleId", "sessionId"]);
           await authorize(deps.auth, deps.ownerUid);
-          const inventory = await readSessionProtectedContentInventory(deps.db, {
-            courseId: validateCourseId(input.courseId), moduleId: validateCourseId(input.moduleId), sessionId: validateCourseId(input.sessionId),
-          });
+          const inventory = await readSessionProtectedContentInventory(
+            deps.db,
+            {
+              courseId: validateCourseId(input.courseId),
+              moduleId: validateCourseId(input.moduleId),
+              sessionId: validateCourseId(input.sessionId),
+            },
+          );
           return send(res, 200, { inventory });
         }
         if (url.pathname === "/api/video/replace/review") {
-          exactInput(input, ["deploymentId", "expectedCourseId", "expectedModuleId", "expectedSessionId"]);
+          exactInput(input, [
+            "deploymentId",
+            "expectedCourseId",
+            "expectedModuleId",
+            "expectedSessionId",
+          ]);
           await authorize(deps.auth, deps.ownerUid);
           const deploymentId = requiredString(input.deploymentId);
           const deployment = verifiedDeployments.get(deploymentId);
           if (!deployment) return fail(res, 409);
           requireExpectedTarget(input, deployment.review.safe.target);
-          const review = await reviewVideoReplacement(deps.db, deployment, deps.projectId);
+          const review = await reviewVideoReplacement(
+            deps.db,
+            deployment,
+            deps.projectId,
+          );
           const reviewId = randomBytes(24).toString("base64url");
           videoReplaceReviews.add(reviewId, review);
           return send(res, 200, { reviewId, review: review.safe });
@@ -648,13 +843,18 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         if (url.pathname === "/api/video/replace/apply") {
           exactInput(input, ["reviewId", "confirmation"]);
           await authorize(deps.auth, deps.ownerUid);
-          if (requiredString(input.confirmation) !== VIDEO_REPLACE_CONFIRMATION) return fail(res, 400);
+          if (requiredString(input.confirmation) !== VIDEO_REPLACE_CONFIRMATION)
+            return fail(res, 400);
           const reviewId = requiredString(input.reviewId);
           let deploymentId: string | undefined;
-          const result = await runLifecycleReview(videoReplaceReviews, reviewId, async (review) => {
-            deploymentId = review.deployment.deploymentId;
-            return applyVideoReplacement(deps.db, review);
-          });
+          const result = await runLifecycleReview(
+            videoReplaceReviews,
+            reviewId,
+            async (review) => {
+              deploymentId = review.deployment.deploymentId;
+              return applyVideoReplacement(deps.db, review);
+            },
+          );
           if (!result) return fail(res, 409);
           if (deploymentId) verifiedDeployments.delete(deploymentId);
           return send(res, 200, { result });
@@ -662,7 +862,11 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         if (url.pathname === "/api/video/unbind/review") {
           exactInput(input, ["courseId", "moduleId", "sessionId"]);
           await authorize(deps.auth, deps.ownerUid);
-          const review = await reviewVideoUnbind(deps.db, { courseId: validateCourseId(input.courseId), moduleId: validateCourseId(input.moduleId), sessionId: validateCourseId(input.sessionId) });
+          const review = await reviewVideoUnbind(deps.db, {
+            courseId: validateCourseId(input.courseId),
+            moduleId: validateCourseId(input.moduleId),
+            sessionId: validateCourseId(input.sessionId),
+          });
           const reviewId = randomBytes(24).toString("base64url");
           videoUnbindReviews.add(reviewId, review);
           return send(res, 200, { reviewId, review: review.safe });
@@ -670,21 +874,39 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         if (url.pathname === "/api/video/unbind/apply") {
           exactInput(input, ["reviewId", "confirmation"]);
           await authorize(deps.auth, deps.ownerUid);
-          if (requiredString(input.confirmation) !== VIDEO_UNBIND_CONFIRMATION) return fail(res, 400);
+          if (requiredString(input.confirmation) !== VIDEO_UNBIND_CONFIRMATION)
+            return fail(res, 400);
           const reviewId = requiredString(input.reviewId);
-          const result = await runLifecycleReview(videoUnbindReviews, reviewId, (review) => applyVideoUnbind(deps.db, review));
+          const result = await runLifecycleReview(
+            videoUnbindReviews,
+            reviewId,
+            (review) => applyVideoUnbind(deps.db, review),
+          );
           if (!result) return fail(res, 409);
           return send(res, 200, { result });
         }
         if (url.pathname === "/api/resource/session/replace/review") {
-          exactInput(input, ["deploymentId", "oldResourceId", "expectedCourseId", "expectedModuleId", "expectedSessionId"]);
+          exactInput(input, [
+            "deploymentId",
+            "oldResourceId",
+            "expectedCourseId",
+            "expectedModuleId",
+            "expectedSessionId",
+          ]);
           await authorize(deps.auth, deps.ownerUid);
-          const deployment = verifiedResourceDeployments.get(requiredString(input.deploymentId));
+          const deployment = verifiedResourceDeployments.get(
+            requiredString(input.deploymentId),
+          );
           if (!deployment) return fail(res, 409);
           const scope = deployment.review.release.preparation.identity.scope;
           if (scope.type !== "session") return fail(res, 409);
           requireExpectedTarget(input, scope);
-          const review = await reviewResourceReplacement(deps.db, deployment, deps.projectId, requiredString(input.oldResourceId));
+          const review = await reviewResourceReplacement(
+            deps.db,
+            deployment,
+            deps.projectId,
+            requiredString(input.oldResourceId),
+          );
           const reviewId = randomBytes(24).toString("base64url");
           resourceReplaceReviews.add(reviewId, review);
           return send(res, 200, { reviewId, review: review.safe });
@@ -692,21 +914,41 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         if (url.pathname === "/api/resource/session/replace/apply") {
           exactInput(input, ["reviewId", "confirmation"]);
           await authorize(deps.auth, deps.ownerUid);
-          if (requiredString(input.confirmation) !== RESOURCE_REPLACE_CONFIRMATION) return fail(res, 400);
+          if (
+            requiredString(input.confirmation) !== RESOURCE_REPLACE_CONFIRMATION
+          )
+            return fail(res, 400);
           const reviewId = requiredString(input.reviewId);
           let deploymentId: string | undefined;
-          const result = await runLifecycleReview(resourceReplaceReviews, reviewId, async (review) => {
-            deploymentId = review.deployment.deploymentId;
-            return applyResourceReplacement(deps.db, review);
-          });
+          const result = await runLifecycleReview(
+            resourceReplaceReviews,
+            reviewId,
+            async (review) => {
+              deploymentId = review.deployment.deploymentId;
+              return applyResourceReplacement(deps.db, review);
+            },
+          );
           if (!result) return fail(res, 409);
           if (deploymentId) verifiedResourceDeployments.delete(deploymentId);
           return send(res, 200, { result });
         }
         if (url.pathname === "/api/resource/session/remove/review") {
-          exactInput(input, ["courseId", "moduleId", "sessionId", "resourceId"]);
+          exactInput(input, [
+            "courseId",
+            "moduleId",
+            "sessionId",
+            "resourceId",
+          ]);
           await authorize(deps.auth, deps.ownerUid);
-          const review = await reviewResourceRemoval(deps.db, { courseId: validateCourseId(input.courseId), moduleId: validateCourseId(input.moduleId), sessionId: validateCourseId(input.sessionId) }, requiredString(input.resourceId));
+          const review = await reviewResourceRemoval(
+            deps.db,
+            {
+              courseId: validateCourseId(input.courseId),
+              moduleId: validateCourseId(input.moduleId),
+              sessionId: validateCourseId(input.sessionId),
+            },
+            requiredString(input.resourceId),
+          );
           const reviewId = randomBytes(24).toString("base64url");
           resourceRemoveReviews.add(reviewId, review);
           return send(res, 200, { reviewId, review: review.safe });
@@ -714,19 +956,32 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         if (url.pathname === "/api/resource/session/remove/apply") {
           exactInput(input, ["reviewId", "confirmation"]);
           await authorize(deps.auth, deps.ownerUid);
-          if (requiredString(input.confirmation) !== RESOURCE_REMOVE_CONFIRMATION) return fail(res, 400);
+          if (
+            requiredString(input.confirmation) !== RESOURCE_REMOVE_CONFIRMATION
+          )
+            return fail(res, 400);
           const reviewId = requiredString(input.reviewId);
-          const result = await runLifecycleReview(resourceRemoveReviews, reviewId, (review) => applyResourceRemoval(deps.db, review));
+          const result = await runLifecycleReview(
+            resourceRemoveReviews,
+            reviewId,
+            (review) => applyResourceRemoval(deps.db, review),
+          );
           if (!result) return fail(res, 409);
           return send(res, 200, { result });
         }
         if (url.pathname === "/api/resource/session/release") {
           exactInput(input, ["preparationId"]);
           await authorize(deps.auth, deps.ownerUid);
-          const prepared = preparedResources.get(requiredString(input.preparationId));
+          const prepared = preparedResources.get(
+            requiredString(input.preparationId),
+          );
           if (!prepared) return fail(res, 409);
           const releaseId = randomBytes(24).toString("base64url");
-          const release = await prepareResourceRelease(prepared, deps.projectId, releaseId);
+          const release = await prepareResourceRelease(
+            prepared,
+            deps.projectId,
+            releaseId,
+          );
           resourceReleases.set(releaseId, release);
           return send(res, 200, { releaseId, release: release.safe });
         }
@@ -736,7 +991,10 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           const releaseId = requiredString(input.releaseId);
           const release = resourceReleases.get(releaseId);
           if (!release) return fail(res, 409);
-          const preflight = await preflightResourceRelease(release, deps.projectId);
+          const preflight = await preflightResourceRelease(
+            release,
+            deps.projectId,
+          );
           preflightedResourceReleases.add(releaseId);
           return send(res, 200, { preflight });
         }
@@ -745,27 +1003,44 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           await authorize(deps.auth, deps.ownerUid);
           const releaseId = requiredString(input.releaseId);
           const release = resourceReleases.get(releaseId);
-          if (!release || !preflightedResourceReleases.has(releaseId)) return fail(res, 409);
+          if (!release || !preflightedResourceReleases.has(releaseId))
+            return fail(res, 409);
           const reviewId = randomBytes(24).toString("base64url");
-          const review = await createResourceDeployReview(release, deps.projectId, reviewId);
+          const review = await createResourceDeployReview(
+            release,
+            deps.projectId,
+            reviewId,
+          );
           resourceDeployReviews.set(reviewId, { review, used: false });
           return send(res, 200, { reviewId, review: review.safe });
         }
         if (url.pathname === "/api/resource/session/deploy/apply") {
           exactInput(input, ["reviewId", "confirmation"]);
           await authorize(deps.auth, deps.ownerUid);
-          if (requiredString(input.confirmation) !== HOSTING_DEPLOY_CONFIRMATION) return fail(res, 400);
+          if (
+            requiredString(input.confirmation) !== HOSTING_DEPLOY_CONFIRMATION
+          )
+            return fail(res, 400);
           const reviewId = requiredString(input.reviewId);
           const record = resourceDeployReviews.get(reviewId);
           if (!record || record.used) return fail(res, 409);
           record.used = true;
           try {
             const deploymentId = randomBytes(24).toString("base64url");
-            const result = await deployResource(record.review, deps.projectId, deploymentId);
+            const result = await deployResource(
+              record.review,
+              deps.projectId,
+              deploymentId,
+            );
             resourceDeployReviews.delete(reviewId);
             if (result.deployCompleted) {
               deployedResourceReleases.set(deploymentId, record.review);
-              if (result.safe.status === "VERIFIED_DEPLOYED") verifiedResourceDeployments.set(deploymentId, { deploymentId, status: "VERIFIED_DEPLOYED", review: record.review });
+              if (result.safe.status === "VERIFIED_DEPLOYED")
+                verifiedResourceDeployments.set(deploymentId, {
+                  deploymentId,
+                  status: "VERIFIED_DEPLOYED",
+                  review: record.review,
+                });
             }
             return send(res, 200, { deployment: result.safe });
           } catch (error) {
@@ -779,33 +1054,53 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           const deploymentId = requiredString(input.deploymentId);
           const review = deployedResourceReleases.get(deploymentId);
           if (!review) return fail(res, 409);
-          const verification = await retryResourceVerification(review, deploymentId);
-          verifiedResourceDeployments.set(deploymentId, { deploymentId, status: "VERIFIED_DEPLOYED", review });
+          const verification = await retryResourceVerification(
+            review,
+            deploymentId,
+          );
+          verifiedResourceDeployments.set(deploymentId, {
+            deploymentId,
+            status: "VERIFIED_DEPLOYED",
+            review,
+          });
           return send(res, 200, { deployment: verification });
         }
         if (url.pathname === "/api/resource/session/bind/review") {
           exactInput(input, ["deploymentId"]);
           await authorize(deps.auth, deps.ownerUid);
-          const deployment = verifiedResourceDeployments.get(requiredString(input.deploymentId));
+          const deployment = verifiedResourceDeployments.get(
+            requiredString(input.deploymentId),
+          );
           if (!deployment) return fail(res, 409);
           const reviewId = randomBytes(24).toString("base64url");
-          const review = await createResourceBindingReview(deps.db, deployment, deps.projectId, reviewId);
+          const review = await createResourceBindingReview(
+            deps.db,
+            deployment,
+            deps.projectId,
+            reviewId,
+          );
           resourceBindingReviews.set(reviewId, { review, used: false });
           return send(res, 200, { reviewId, review: review.safe });
         }
         if (url.pathname === "/api/resource/session/bind/apply") {
           exactInput(input, ["reviewId", "confirmation"]);
           await authorize(deps.auth, deps.ownerUid);
-          if (requiredString(input.confirmation) !== RESOURCE_BIND_CONFIRMATION) return fail(res, 400);
+          if (requiredString(input.confirmation) !== RESOURCE_BIND_CONFIRMATION)
+            return fail(res, 400);
           const reviewId = requiredString(input.reviewId);
           const record = resourceBindingReviews.get(reviewId);
           if (!record || record.used) return fail(res, 409);
           record.used = true;
           try {
-            const result = await applyResourceBinding(deps.db, record.review, deps.projectId);
+            const result = await applyResourceBinding(
+              deps.db,
+              record.review,
+              deps.projectId,
+            );
             const deploymentId = record.review.deployment.deploymentId;
             const releaseId = record.review.deployment.review.release.releaseId;
-            const preparationId = record.review.deployment.review.release.preparation.preparationId;
+            const preparationId =
+              record.review.deployment.review.release.preparation.preparationId;
             resourceBindingReviews.delete(reviewId);
             verifiedResourceDeployments.delete(deploymentId);
             deployedResourceReleases.delete(deploymentId);
@@ -982,24 +1277,37 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           await authorize(deps.auth, deps.ownerUid);
           const inventory = await readManagedAccessCodes(deps.db, now());
           accessCodeHandles.clear();
-          for (const [handle, documentId] of inventory.handles) accessCodeHandles.set(handle, documentId);
+          for (const [handle, documentId] of inventory.handles)
+            accessCodeHandles.set(handle, documentId);
           return send(res, 200, inventory.response);
         }
         if (url.pathname === "/api/access-codes/inspect") {
           exactInput(input, ["handle"]);
           await authorize(deps.auth, deps.ownerUid);
-          const documentId = accessCodeHandles.get(requiredString(input.handle));
+          const documentId = accessCodeHandles.get(
+            requiredString(input.handle),
+          );
           if (!documentId) return fail(res, 409);
           return send(res, 200, {
-            accessCode: await inspectManagedAccessCode(deps.db, documentId, now()),
+            accessCode: await inspectManagedAccessCode(
+              deps.db,
+              documentId,
+              now(),
+            ),
           });
         }
         if (url.pathname === "/api/access-codes/revoke/review") {
           exactInput(input, ["handle"]);
           await authorize(deps.auth, deps.ownerUid);
-          const documentId = accessCodeHandles.get(requiredString(input.handle));
+          const documentId = accessCodeHandles.get(
+            requiredString(input.handle),
+          );
           if (!documentId) return fail(res, 409);
-          const review = await reviewManagedAccessCode(deps.db, documentId, now());
+          const review = await reviewManagedAccessCode(
+            deps.db,
+            documentId,
+            now(),
+          );
           if (accessCodeReviews.size >= ACCESS_CODE_REVIEW_LIMIT) {
             for (const [existingId, existing] of accessCodeReviews) {
               if (!existing.used) {
@@ -1008,10 +1316,14 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
               }
             }
           }
-          if (accessCodeReviews.size >= ACCESS_CODE_REVIEW_LIMIT) return fail(res, 409);
+          if (accessCodeReviews.size >= ACCESS_CODE_REVIEW_LIMIT)
+            return fail(res, 409);
           const reviewId = randomBytes(24).toString("base64url");
           accessCodeReviews.set(reviewId, { review, used: false });
-          return send(res, 200, { reviewId, review: safeAccessCodeReview(review, now()) });
+          return send(res, 200, {
+            reviewId,
+            review: safeAccessCodeReview(review, now()),
+          });
         }
         if (url.pathname === "/api/access-codes/revoke/apply") {
           exactInput(input, ["reviewId", "confirmation"]);
@@ -1019,10 +1331,15 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           const reviewId = requiredString(input.reviewId);
           const record = accessCodeReviews.get(reviewId);
           if (!record || record.used) return fail(res, 409);
-          if (input.confirmation !== REVOKE_ACCESS_CODE_CONFIRMATION) return fail(res, 400);
+          if (input.confirmation !== REVOKE_ACCESS_CODE_CONFIRMATION)
+            return fail(res, 400);
           record.used = true;
           try {
-            const result = await applyManagedAccessCode(deps.db, record.review, now());
+            const result = await applyManagedAccessCode(
+              deps.db,
+              record.review,
+              now(),
+            );
             accessCodeReviews.delete(reviewId);
             return send(res, 200, { result });
           } catch (error) {
@@ -1148,10 +1465,17 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
         if (url.pathname === "/api/video/bind/review") {
           exactInput(input, ["deploymentId"]);
           await authorize(deps.auth, deps.ownerUid);
-          const deployment = verifiedDeployments.get(requiredString(input.deploymentId));
+          const deployment = verifiedDeployments.get(
+            requiredString(input.deploymentId),
+          );
           if (!deployment) return fail(res, 409);
           const reviewId = randomBytes(24).toString("base64url");
-          const review = await createBindingReview(deps.db, deployment, deps.projectId, reviewId);
+          const review = await createBindingReview(
+            deps.db,
+            deployment,
+            deps.projectId,
+            reviewId,
+          );
           bindingReviews.set(reviewId, { review, used: false });
           return send(res, 200, { reviewId, review: review.safe });
         }
@@ -1164,7 +1488,11 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           const record = bindingReviews.get(reviewId);
           if (!record || record.used) return fail(res, 409);
           record.used = true;
-          const result = await applyBindingReview(deps.db, record.review, deps.projectId);
+          const result = await applyBindingReview(
+            deps.db,
+            record.review,
+            deps.projectId,
+          );
           bindingReviews.delete(reviewId);
           return send(res, 200, { result });
         }
@@ -1314,10 +1642,21 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           exactInput(
             input,
             Object.prototype.hasOwnProperty.call(input, "isFree")
-              ? ["courseId", "moduleId", "sessionId", "title", "order", "isFree"]
+              ? [
+                  "courseId",
+                  "moduleId",
+                  "sessionId",
+                  "title",
+                  "order",
+                  "isFree",
+                ]
               : ["courseId", "moduleId", "sessionId", "title", "order"],
           );
-          if (Object.prototype.hasOwnProperty.call(input, "isFree") && typeof input.isFree !== "boolean") return fail(res, 400);
+          if (
+            Object.prototype.hasOwnProperty.call(input, "isFree") &&
+            typeof input.isFree !== "boolean"
+          )
+            return fail(res, 400);
           await authorize(deps.auth, deps.ownerUid);
           const result = await createSession(
             deps.auth,

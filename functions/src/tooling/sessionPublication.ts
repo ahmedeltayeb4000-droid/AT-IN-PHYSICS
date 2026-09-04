@@ -158,6 +158,9 @@ export function derivePublicationManifest(
       ...(Object.prototype.hasOwnProperty.call(session, "releaseAt")
         ? { releaseAt: (session.releaseAt as Timestamp).toDate() }
         : {}),
+      ...(Object.prototype.hasOwnProperty.call(session, "closeAt")
+        ? { closeAt: (session.closeAt as Timestamp).toDate() }
+        : {}),
       title: session.title,
       isFree: session.isFree === true,
     };
@@ -241,10 +244,14 @@ export async function runSessionPublicationService(
           id: doc.id,
           title: data.title,
           order: data.order,
-          publicationStatus: doc.id === ids.sessionId ? "published" : data.publicationStatus,
+          publicationStatus:
+            doc.id === ids.sessionId ? "published" : data.publicationStatus,
           isFree: data.isFree === true,
           ...(Object.prototype.hasOwnProperty.call(data, "releaseAt")
             ? { releaseAt: (data.releaseAt as Timestamp).toDate() }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(data, "closeAt")
+            ? { closeAt: (data.closeAt as Timestamp).toDate() }
             : {}),
         };
       }),
@@ -299,10 +306,14 @@ export async function runSessionPublicationService(
           id: doc.id,
           title: data.title,
           order: data.order,
-          publicationStatus: doc.id === ids.sessionId ? "published" : data.publicationStatus,
+          publicationStatus:
+            doc.id === ids.sessionId ? "published" : data.publicationStatus,
           isFree: data.isFree === true,
           ...(Object.prototype.hasOwnProperty.call(data, "releaseAt")
             ? { releaseAt: (data.releaseAt as Timestamp).toDate() }
+            : {}),
+          ...(Object.prototype.hasOwnProperty.call(data, "closeAt")
+            ? { closeAt: (data.closeAt as Timestamp).toDate() }
             : {}),
         };
       }),
@@ -323,7 +334,9 @@ export async function runSessionPublicationService(
     if (manifestChange)
       transaction.set(manifestRef, { sessionIds: [...proposed.sessionIds] });
     if (freeManifestChange)
-      transaction.set(freeManifestRef, { sessions: proposedFree.sessions.map((item) => ({ ...item })) });
+      transaction.set(freeManifestRef, {
+        sessions: proposedFree.sessions.map((item) => ({ ...item })),
+      });
     return sessionChange
       ? ("published" as const)
       : manifestChange || freeManifestChange
@@ -370,7 +383,10 @@ function inspection(
   const discoveryChangeRequired =
     currentManifest === null ||
     !sessionDiscoveryManifestsEqual(currentManifest, proposed) ||
-    !freeSessionDiscoveryManifestsEqual(currentFreeManifest, proposedFreeManifest);
+    !freeSessionDiscoveryManifestsEqual(
+      currentFreeManifest,
+      proposedFreeManifest,
+    );
   return {
     sessionPath,
     currentPublicationState: current.publicationStatus as "draft" | "published",
