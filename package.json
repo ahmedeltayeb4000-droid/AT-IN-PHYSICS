@@ -39,6 +39,8 @@
     "backend:test:staff-capability": "npm --prefix functions run test:staff-capability",
     "enrollment:grant": "npm --prefix functions run enrollment:grant --",
     "course:create": "npm --prefix functions run course:create --",
+    "course:correct": "npm --prefix functions run course:correct --",
+    "backend:test:course-correction:integration": "npm run backend:build && firebase emulators:exec --project demo-at-in-physics --only auth,firestore \"npm --prefix functions run test:course-correction:integration\"",
     "backend:test:course-creation": "npm --prefix functions run test:course-creation",
     "backend:test:course-inventory": "npm --prefix functions run test:course-inventory",
     "backend:test:course-creation:integration": "npm run backend:build && firebase emulators:exec --project demo-at-in-physics --only auth,firestore \"npm --prefix functions run test:course-creation:integration\"",

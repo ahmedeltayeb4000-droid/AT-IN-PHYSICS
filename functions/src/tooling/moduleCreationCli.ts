@@ -8,21 +8,39 @@ import {
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import {
-  parseModuleCreationArgs,
   resolveModuleCreationOwnerUid,
   resolveModuleCreationProject,
   runModuleCreationService,
   safeModuleCreationSummary,
 } from "./moduleCreation.js";
+import { readTrustedModuleCreationRequest } from "./hierarchyCreationRequestFile.js";
+
+function parseCliArgs(values: readonly string[]) {
+  if (values.length !== 2 && values.length !== 3)
+    throw new Error("Use --request-file <path> [--apply].");
+  if (
+    values[0] !== "--request-file" ||
+    !values[1] ||
+    (values.length === 3 && values[2] !== "--apply")
+  )
+    throw new Error("Use --request-file <path> [--apply].");
+  const loaded = readTrustedModuleCreationRequest(values[1]);
+  return {
+    ...loaded.request,
+    apply: values[2] === "--apply",
+    requestSha256: loaded.sha256,
+  };
+}
 
 async function main() {
-  const options = parseModuleCreationArgs(process.argv.slice(2));
+  const options = parseCliArgs(process.argv.slice(2));
   const projectId = resolveModuleCreationProject(process.env);
   const ownerUid = resolveModuleCreationOwnerUid(process.env);
   console.log(`Project ID: ${projectId}`);
   console.log(`Mode: ${options.apply ? "APPLY" : "DRY RUN"}`);
   console.log(`Course ID: ${options.courseId}`);
   console.log(`Module ID: ${options.moduleId}`);
+  console.log(`Request SHA-256: ${options.requestSha256}`);
   const app = initializeApp(
     { credential: applicationDefault(), projectId },
     "owner-module-creation-cli",
