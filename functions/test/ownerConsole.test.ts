@@ -22,6 +22,7 @@ import {
   listenOwnerConsole,
   OWNER_CONSOLE_HOST,
 } from "../src/ownerConsole/server.js";
+import { createEnrollmentInspectionGuard } from "../src/ownerConsole/enrollmentManagementClient.js";
 import type { SessionPublicationResult } from "../src/tooling/sessionPublication.js";
 import type { CourseCreationOptions } from "../src/tooling/courseCreation.js";
 import type { ModuleCreationOptions } from "../src/tooling/moduleCreation.js";
@@ -799,6 +800,77 @@ test("trusted Course publication requires confirmation, preserves failed review,
   }
 });
 
+test("Enrollment inspection guard ignores stale out-of-order responses", () => {
+  const guard = createEnrollmentInspectionGuard();
+  const enrollmentA = { userId: "student-a", courseId: "mechanics" };
+  const enrollmentB = { userId: "student-b", courseId: "mechanics" };
+
+  const requestA = guard.beginInspection(enrollmentA);
+  assert.equal(guard.canApply(), false);
+  assert.equal(guard.snapshot().actionableIdentity, null);
+
+  const requestB = guard.beginInspection(enrollmentB);
+  assert.equal(guard.acceptInspection(requestB, enrollmentB), true);
+  assert.equal(guard.acceptInspection(requestA, enrollmentA), false);
+
+  const reviewB = guard.beginReview(enrollmentB);
+  assert.notEqual(reviewB, null);
+  assert.equal(guard.acceptReview(reviewB!, enrollmentB), true);
+  assert.equal(guard.canApply(), true);
+  assert.equal(guard.matchesReviewed(enrollmentB), true);
+  assert.equal(guard.matchesReviewed(enrollmentA), false);
+});
+
+test("Enrollment inspection guard clears actions and reviews on every newer selection", () => {
+  const guard = createEnrollmentInspectionGuard();
+  const enrollmentA = { userId: "student-a", courseId: "mechanics" };
+  const enrollmentB = { userId: "student-b", courseId: "thermodynamics" };
+
+  const requestA = guard.beginInspection(enrollmentA);
+  assert.equal(guard.acceptInspection(requestA, enrollmentA), true);
+  const reviewA = guard.beginReview(enrollmentA);
+  assert.notEqual(reviewA, null);
+  assert.equal(guard.acceptReview(reviewA!, enrollmentA), true);
+  assert.equal(guard.canApply(), true);
+
+  const requestB = guard.beginInspection(enrollmentB);
+  assert.equal(guard.canApply(), false);
+  assert.equal(guard.snapshot().actionableIdentity, null);
+  assert.equal(guard.snapshot().reviewed, null);
+  assert.equal(guard.acceptInspection(requestA, enrollmentA), false);
+  assert.equal(guard.acceptInspection(requestB, enrollmentA), false);
+  assert.equal(guard.beginReview(enrollmentA), null);
+
+  assert.equal(guard.acceptInspection(requestB, enrollmentB), true);
+  const reviewB = guard.beginReview(enrollmentB);
+  assert.notEqual(reviewB, null);
+  assert.equal(guard.acceptReview(reviewB!, enrollmentB), true);
+  assert.equal(guard.canApply(), true);
+
+  guard.invalidate();
+  assert.equal(guard.canApply(), false);
+  assert.equal(guard.matchesReviewed(enrollmentB), false);
+});
+
+test("Enrollment inspection guard preserves the inverse response ordering", () => {
+  const guard = createEnrollmentInspectionGuard();
+  const enrollmentA = { userId: "student-a", courseId: "mechanics" };
+  const enrollmentB = { userId: "student-b", courseId: "mechanics" };
+
+  const requestA = guard.beginInspection(enrollmentA);
+  assert.equal(guard.acceptInspection(requestA, enrollmentA), true);
+  assert.notEqual(guard.beginReview(enrollmentA), null);
+
+  const requestB = guard.beginInspection(enrollmentB);
+  assert.equal(guard.canApply(), false);
+  assert.equal(guard.acceptInspection(requestB, enrollmentB), true);
+  assert.equal(guard.beginReview(enrollmentA), null);
+  const reviewB = guard.beginReview(enrollmentB);
+  assert.notEqual(reviewB, null);
+  assert.equal(guard.acceptReview(reviewB!, enrollmentB), true);
+  assert.equal(guard.canApply(), true);
+});
+
 test("Enrollment Management inventory and exact review/apply routes are authorized, sanitized, and one-time", async () => {
   let authorized = 0;
   let applies = 0;
@@ -1018,6 +1090,11 @@ test("Enrollment Management inventory and exact review/apply routes are authoriz
     assert.doesNotThrow(() => new Script(script));
     assert.match(script, /Enrollment Management/);
     assert.match(script, /REVOKE ENROLLMENT/);
+    assert.match(script, /beginInspection/);
+    assert.match(script, /acceptInspection/);
+    assert.match(script, /clearEnrollmentActionableState/);
+    assert.match(script, /Enrollment selection changed\. Inspect it again\./);
+    assert.match(script, /matchesReviewed/);
     assert.equal(authorized, 14);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
