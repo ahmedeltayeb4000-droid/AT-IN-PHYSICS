@@ -115,20 +115,21 @@ export function CourseDetailPage() {
 
   return (
     <PageTransition>
-      <Section>
+      <Section className="overflow-hidden">
         <PageContainer>
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto max-w-4xl">
             <Link to="/" className="text-sm font-semibold text-accent">
               ← Back to course catalog
             </Link>
-            <h1 className="mt-6 text-4xl font-bold text-text sm:text-5xl">
+            <p className="at-kicker mt-8">Course by Physicist / Ahmed Eltayeb</p>
+            <h1 className="mt-4 break-words text-4xl font-black tracking-tight text-text sm:text-6xl">
               {course.title}
             </h1>
             <p className="mt-5 text-lg leading-8 text-text-muted">
               {course.shortDescription}
             </p>
 
-            <GlassCard className="mt-10 p-7 sm:p-8">
+            <GlassCard className="mt-10 border-accent/30 p-6 sm:p-8">
               <h2 className="text-2xl font-bold text-text">Course curriculum</h2>
               {enrollmentLoading ? (
                 <p className="mt-4 text-sm text-text-muted" role="status">
@@ -186,7 +187,7 @@ export function CourseDetailPage() {
                   {curriculumQuery.data.map(({ module, sessions }) => (
                     <section
                       key={module.id}
-                      className="rounded-xl border border-white/10 bg-white/[.03] p-5"
+                      className="rounded-xl border border-border bg-black/20 p-5"
                     >
                       <h3 className="text-lg font-bold text-text">
                         {module.title}
@@ -206,7 +207,7 @@ export function CourseDetailPage() {
                             return (
                               <li
                                 key={session.id}
-                                className="rounded-lg border border-white/10 px-4 py-3"
+                                className="min-w-0 rounded-lg border border-border bg-white/[.02] px-4 py-3 transition hover:border-accent/40"
                               >
                                 <p className="text-xs font-bold uppercase tracking-[.16em] text-accent">
                                   Session {index + 1}
@@ -214,7 +215,7 @@ export function CourseDetailPage() {
                                 {sessionPath ? (
                                   <Link
                                     to={sessionPath}
-                                    className="mt-1 inline-flex font-semibold text-text hover:text-accent"
+                                    className="mt-1 inline-flex break-words font-semibold text-text hover:text-accent"
                                   >
                                     {session.title}
                                   </Link>

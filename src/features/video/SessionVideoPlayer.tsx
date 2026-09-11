@@ -140,7 +140,7 @@ export function SessionVideoPlayer({
   return (
     <div
       ref={wrapperRef}
-      className="relative mt-8 overflow-hidden rounded-xl border border-white/10 bg-black p-3"
+      className="relative mt-8 overflow-hidden rounded-2xl border border-accent/35 bg-black p-1.5 shadow-[0_18px_55px_rgba(0,0,0,.55)] sm:p-3"
       data-watermark-policy={watermark.mode}
     >
       {state.status === "ready" && playbackCanRender ? (

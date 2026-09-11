@@ -37,26 +37,29 @@ export function HomePage() {
     <PageTransition>
       <section className="relative isolate overflow-hidden">
         <PhysicsBackground />
-        <PageContainer className="relative py-28">
-          <Badge tone="info">PHYSICIST | AHMED ELTAYEB</Badge>
-          <h1 className="mt-6 text-7xl font-bold text-text">
+        <PageContainer className="relative flex min-h-[580px] flex-col items-center justify-center py-20 text-center sm:min-h-[680px] sm:py-28">
+          <p className="at-kicker">Mastering the laws of the universe with ease</p>
+          <h1 className="mt-6 bg-gradient-to-b from-cyan-light to-accent bg-clip-text text-5xl font-black tracking-[-.05em] text-transparent drop-shadow-[0_0_24px_rgba(37,199,255,.38)] sm:text-7xl lg:text-8xl">
             {t("hero.title")}
           </h1>
-          <p className="mt-6 text-lg text-text-muted">{t("hero.subtitle")}</p>
+          <p className="mt-5 text-2xl font-black uppercase tracking-[.03em] text-text sm:text-4xl lg:text-5xl">PHYSICIST / AHMED ELTAYEB</p>
+          <p className="mt-6 max-w-2xl text-base leading-7 text-text-muted sm:text-lg">{t("hero.subtitle")}</p>
+          <a href="#courses" className="at-link-button mt-9">Explore Courses</a>
         </PageContainer>
       </section>
 
-      <Section className="py-10 border-b border-border">
+      <Section className="border-y border-border py-10">
         <PageContainer>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {[
               { label: "Learn with clarity", value: "Concept-first" },
               { label: "Study at your pace", value: "Flexible access" },
               { label: "Watch with confidence", value: "Protected playback" },
               { label: "Build real understanding", value: "Focused practice" },
             ].map((item) => (
-              <div key={item.value} className="text-center">
-                <div className="text-xl font-bold text-accent">
+              <div key={item.value} className="rounded-2xl border border-accent/45 bg-panel/90 p-6 text-center shadow-[0_0_22px_rgba(37,199,255,.1)]">
+                <div aria-hidden="true" className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-full border border-accent/35 text-2xl text-accent">⌁</div>
+                <div className="text-lg font-bold text-text">
                   {item.value}
                 </div>
                 <div className="text-sm text-text-muted mt-1 uppercase tracking-wider">
@@ -68,7 +71,7 @@ export function HomePage() {
         </PageContainer>
       </Section>
 
-      <Section className="py-16">
+      <Section id="courses" className="py-16">
         <PageContainer>
           <h2 className="mb-12 text-center text-4xl font-bold text-text">
             {t("courses.title")}
@@ -94,8 +97,8 @@ export function HomePage() {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {courses.map((course) => (
-                <GlassCard key={course.id} className="p-6 flex flex-col">
-                  <div className="h-40 bg-accent/10 rounded-lg mb-4 flex items-center justify-center text-accent font-bold">
+                <GlassCard key={course.id} className="flex min-w-0 flex-col p-6">
+                  <div className="mb-5 flex h-40 items-center justify-center rounded-xl border border-accent/20 bg-[radial-gradient(circle,rgba(37,199,255,.14),transparent_65%)] px-4 text-center font-bold text-accent">
                     {course.title}
                   </div>
                   <h3 className="text-xl font-bold text-text mb-2">
@@ -106,7 +109,7 @@ export function HomePage() {
                   </p>
                   <Link
                     to={`/courses/${course.slug}`}
-                    className="mt-auto w-full py-2 bg-accent text-white rounded-lg font-bold text-center"
+                    className="at-link-button mt-auto w-full"
                   >
                     View Course
                   </Link>
@@ -117,7 +120,7 @@ export function HomePage() {
         </PageContainer>
       </Section>
 
-      <Section className="bg-panel/40">
+      <Section className="border-y border-border bg-panel/20">
         <PageContainer>
           <div className="mx-auto max-w-3xl text-center">
             <Badge tone="info">PUBLIC SAMPLE LESSONS</Badge>
@@ -166,7 +169,7 @@ export function HomePage() {
                       session.module.id,
                       session.id,
                     )!}
-                    className="mt-6 inline-flex self-start rounded-lg bg-accent px-4 py-2 text-sm font-bold text-white"
+                    className="at-link-button mt-6 self-start text-sm"
                   >
                     Open Session
                   </Link>
@@ -177,7 +180,7 @@ export function HomePage() {
         </PageContainer>
       </Section>
 
-      <Section className="bg-panel/40">
+      <Section className="bg-panel/20">
         <PageContainer>
           <h2 className="mb-12 text-center text-4xl font-bold text-text">
             {t("features.title")}
@@ -204,7 +207,7 @@ export function HomePage() {
             {faqs.map((faq, i) => (
               <div
                 key={i}
-                className="border border-border p-5 rounded-xl bg-panel"
+                className="rounded-xl border border-border bg-panel/70 p-5 transition hover:border-accent/40"
               >
                 <h3 className="font-bold text-text">{faq.q}</h3>
                 <p className="mt-2 text-text-muted text-sm">{faq.a}</p>
@@ -214,17 +217,6 @@ export function HomePage() {
         </PageContainer>
       </Section>
 
-      <footer className="border-t border-border py-8 bg-panel">
-        <PageContainer>
-          <div className="text-center">
-            <p className="text-text-muted text-sm">{t("footer.rights")}</p>
-            <div className="mt-2 flex justify-center gap-4 text-sm font-bold text-accent">
-              <Link to="/terms">Terms</Link>
-              <Link to="/privacy">Privacy</Link>
-            </div>
-          </div>
-        </PageContainer>
-      </footer>
     </PageTransition>
   );
 }

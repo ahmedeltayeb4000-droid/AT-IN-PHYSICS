@@ -53,7 +53,7 @@ export function AccessCodeActivationCard() {
   const statusId = "access-code-activation-status";
 
   return (
-    <GlassCard className="mt-8 p-6">
+    <GlassCard className="mt-8 border-accent/35 p-6 sm:p-7">
       <h2 className="text-xl font-bold text-text">Activate Course</h2>
       <p className="mt-2 text-sm text-text-muted">
         Enter the Access Code provided for your course.

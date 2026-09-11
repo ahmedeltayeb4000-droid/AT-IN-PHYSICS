@@ -34,12 +34,12 @@ function StatusPanel({
     <PageTransition>
       <Section>
         <PageContainer>
-          <GlassCard className="mx-auto max-w-2xl p-8 text-center sm:p-10">
+          <GlassCard className="mx-auto max-w-2xl border-accent/30 p-8 text-center sm:p-10">
             <h1 className="text-3xl font-bold text-text">{title}</h1>
             <p className="mt-3 text-text-muted">{description}</p>
             <Link
               to={backTo}
-              className="mt-7 inline-flex rounded-lg bg-accent px-5 py-3 font-semibold text-white"
+              className="at-link-button mt-7"
             >
               Go back
             </Link>
@@ -292,22 +292,23 @@ export function SessionDetailPage() {
     <PageTransition>
       <Section>
         <PageContainer>
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto max-w-5xl">
             <Link
               to={`/courses/${course.slug}`}
               className="text-sm font-semibold text-accent"
             >
               ← Back to {course.title}
             </Link>
-            <GlassCard className="mt-8 p-7 sm:p-8">
+            <GlassCard className="mt-8 border-accent/30 p-5 sm:p-8">
+              <p className="at-kicker">Physicist / Ahmed Eltayeb</p>
               <p className="text-sm font-bold uppercase tracking-[.16em] text-accent">
                 {module.title}
               </p>
-              <h1 className="mt-4 text-4xl font-bold text-text sm:text-5xl">
+              <h1 className="mt-4 break-words text-3xl font-black text-text sm:text-5xl">
                 {session.title}
               </h1>
               {publicFreeAccess ? (
-                <span className="mt-4 inline-flex rounded-full bg-accent px-3 py-1 text-xs font-bold text-white">
+                  <span className="mt-4 inline-flex rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-bold text-accent">
                   OPENED SESSION
                 </span>
               ) : null}
@@ -320,7 +321,7 @@ export function SessionDetailPage() {
                   }
                 />
               ) : null}
-              <div className="mt-10 rounded-xl border border-white/10 bg-white/[.03] p-6">
+              <div className="mt-10 rounded-xl border border-border bg-black/20 p-6">
                 <h2 className="text-xl font-bold text-text">Lesson content</h2>
                 {session.lessonText ? (
                   <p className="mt-2 whitespace-pre-wrap text-text-muted">

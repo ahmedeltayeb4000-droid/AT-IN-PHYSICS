@@ -49,7 +49,7 @@ export function SessionResourceList({
   }
 
   return (
-    <div className="mt-6 rounded-xl border border-white/10 bg-white/[.03] p-6">
+    <div className="mt-6 rounded-xl border border-border bg-black/20 p-5 sm:p-6">
       <h2 className="text-xl font-bold text-text">Resources</h2>
       {resources.isPending ? (
         <p className="mt-2 text-sm text-text-muted" role="status">Loading resources…</p>
@@ -63,12 +63,12 @@ export function SessionResourceList({
             const state = states[resource.resourceId] ?? "idle";
             const active = state === "access" || state === "downloading" || state === "preparing";
             return (
-              <li key={resource.resourceId} className="flex flex-col gap-3 rounded-lg border border-white/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <li key={resource.resourceId} className="flex min-w-0 flex-col gap-3 rounded-lg border border-border bg-white/[.02] p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-semibold text-text">{resource.title}</p>
                   <p className="text-sm text-text-muted">{resource.originalFileName}</p>
                 </div>
-                <button type="button" disabled={active} onClick={() => void download(resource)} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:cursor-wait disabled:opacity-60">
+                <button type="button" disabled={active} onClick={() => void download(resource)} className="min-h-11 shrink-0 rounded-xl bg-accent px-4 py-2 text-sm font-bold text-[#00101a] disabled:cursor-wait disabled:opacity-60">
                   {COPY[state]}
                 </button>
               </li>

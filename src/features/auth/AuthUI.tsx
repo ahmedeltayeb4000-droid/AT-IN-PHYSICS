@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { PropsWithChildren, ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { AnimatedLogo } from "../../components/brand/AnimatedLogo";
 import { PhysicsBackground } from "../../components/brand/PhysicsBackground";
 import { Input } from "../../components/ui/FormControls";
@@ -11,17 +11,20 @@ export function AuthFrame({
   description,
   children,
 }: PropsWithChildren<{ title: string; description: string }>) {
+  const reduceMotion = useReducedMotion();
   return (
-    <main className="relative grid min-h-[calc(100vh-4rem)] place-items-center overflow-x-hidden px-4 py-8 sm:px-5 sm:py-12">
+    <main className="relative grid min-h-[calc(100vh-5rem)] place-items-center overflow-hidden px-4 py-10 sm:px-5 sm:py-16">
       <PhysicsBackground />
       <motion.section
-        initial={{ opacity: 0, y: 16 }}
+        initial={reduceMotion ? false : { opacity: 0, y: 16 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative w-full max-w-md rounded-3xl border border-border bg-panel/90 p-7 shadow-2xl backdrop-blur-xl sm:p-9"
+        transition={reduceMotion ? { duration: 0 } : undefined}
+        className="relative w-full max-w-md rounded-3xl border border-accent/35 bg-panel/95 p-7 shadow-[0_24px_80px_rgba(0,0,0,.55),0_0_36px_rgba(37,199,255,.08)] backdrop-blur-md sm:p-9"
       >
         <Link to="/" className="inline-block" aria-label="A.T IN PHYSICS home">
           <AnimatedLogo />
         </Link>
+        <p className="mt-4 text-xs font-bold uppercase tracking-[.2em] text-accent">Physicist / Ahmed Eltayeb</p>
         <h1 className="mt-8 font-display text-3xl font-bold text-text">
           {title}
         </h1>

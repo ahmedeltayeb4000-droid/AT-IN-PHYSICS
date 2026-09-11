@@ -20,10 +20,11 @@ export function LegalPage({
   return (
     <PageTransition>
       <PageContainer className="py-16 sm:py-20">
-        <article className="mx-auto max-w-3xl text-text">
+        <article className="mx-auto max-w-3xl rounded-3xl border border-border bg-panel/60 p-6 text-text shadow-2xl sm:p-10">
           <p className="text-sm font-bold uppercase tracking-[.2em] text-accent">
             A.T IN PHYSICS
           </p>
+          <p className="mt-2 text-xs font-bold uppercase tracking-[.18em] text-text-subtle">Physicist / Ahmed Eltayeb</p>
           <h1 className="mt-4 text-4xl font-bold tracking-tight sm:text-5xl">
             {title}
           </h1>

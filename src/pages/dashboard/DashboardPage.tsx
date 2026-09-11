@@ -70,7 +70,8 @@ export function DashboardPage() {
   return (
     <Section className="py-10">
       <PageContainer>
-        <h1 className="text-3xl font-bold text-text">Dashboard</h1>
+        <p className="at-kicker">A.T IN PHYSICS · AHMED ELTAYEB</p>
+        <h1 className="at-heading mt-3">Your learning dashboard</h1>
         <p className="mt-2 text-text-muted">
           Your course enrollments and access status.
         </p>
@@ -110,7 +111,7 @@ export function DashboardPage() {
               const presentation = enrollmentStatePresentation[state];
 
               return (
-                <GlassCard key={enrollment.id} className="flex flex-col p-6">
+                <GlassCard key={enrollment.id} className="flex min-w-0 flex-col p-6">
                   <div className="flex items-start justify-between gap-4">
                     <h2 className="text-xl font-bold text-text">
                       {course?.title ?? "Course unavailable"}
@@ -128,7 +129,7 @@ export function DashboardPage() {
                   {state === "active" && course ? (
                     <Link
                       to={`/courses/${course.slug}`}
-                      className="mt-6 inline-flex justify-center rounded-lg bg-accent px-4 py-2 font-bold text-white"
+                      className="at-link-button mt-6"
                     >
                       View course details
                     </Link>
