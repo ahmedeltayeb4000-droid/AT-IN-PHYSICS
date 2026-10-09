@@ -7,7 +7,7 @@ export type CourseInventoryDto = Readonly<{
   slug: string;
   title: string;
   shortDescription: string;
-  status: "draft" | "published";
+  status: "draft" | "published" | "archived";
 }>;
 
 export type TrustedCourseRecord = Readonly<{

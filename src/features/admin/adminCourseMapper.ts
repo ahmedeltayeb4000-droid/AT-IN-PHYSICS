@@ -33,7 +33,7 @@ export function mapAdminCourseDocument(id: string, value: unknown): Course {
     data.slug !== id ||
     !isTrustedText(data.title, 160) ||
     !isTrustedText(data.shortDescription, 1000) ||
-    (data.status !== "draft" && data.status !== "published")
+    (data.status !== "draft" && data.status !== "published" && data.status !== "archived")
   ) {
     throw new Error("Malformed Course inventory response.");
   }

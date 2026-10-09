@@ -8,7 +8,7 @@ import { validateTrustedModuleDocument } from "../tooling/moduleCreation.js";
 export type OwnerCourseDto = Readonly<{
   courseId: string;
   title: string;
-  publicationStatus: "draft" | "published";
+  publicationStatus: "draft" | "published" | "archived";
 }>;
 export type OwnerModuleDto = Readonly<{
   courseId: string;
@@ -88,7 +88,7 @@ export function buildOwnerSessionInventory(
   records: readonly TrustedRecord[],
   courseId: string,
   moduleId: string,
-  coursePublicationStatus: "draft" | "published",
+  coursePublicationStatus: "draft" | "published" | "archived",
   trustedNow = new Date(),
   limit = OWNER_SESSION_INVENTORY_LIMIT,
 ): OwnerSessionDto[] {
@@ -96,7 +96,8 @@ export function buildOwnerSessionInventory(
     throw new Error("Trusted inventory time is invalid.");
   if (
     coursePublicationStatus !== "draft" &&
-    coursePublicationStatus !== "published"
+    coursePublicationStatus !== "published" &&
+    coursePublicationStatus !== "archived"
   )
     throw new Error("Trusted Course publication status is invalid.");
   const course = validateCourseId(courseId);

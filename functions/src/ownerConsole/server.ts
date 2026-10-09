@@ -110,6 +110,8 @@ import {
   type CoursePublicationReview,
 } from "./coursePublication.js";
 import { COURSE_PUBLICATION_CLIENT_JS } from "./coursePublicationClient.js";
+import { COURSE_LIFECYCLE_CLIENT_JS } from "./courseLifecycleClient.js";
+import { ARCHIVE_COURSE_CONFIRMATION, RESTORE_COURSE_CONFIRMATION, applyCourseLifecycle, reviewCourseDeletionEligibility, reviewCourseLifecycle, reviewSessionDeletionEligibility, type CourseLifecycleReview } from "./courseLifecycle.js";
 import {
   applyEnrollmentReview,
   inspectEnrollment,
@@ -223,6 +225,10 @@ export type OwnerConsoleDependencies = Readonly<{
   applyFreeStatus?: typeof applySessionFreeStatus;
   reviewCoursePublication?: typeof reviewCoursePublication;
   applyCoursePublication?: typeof applyCoursePublication;
+  reviewCourseLifecycle?: typeof reviewCourseLifecycle;
+  applyCourseLifecycle?: typeof applyCourseLifecycle;
+  reviewCourseDeletionEligibility?: typeof reviewCourseDeletionEligibility;
+  reviewSessionDeletionEligibility?: typeof reviewSessionDeletionEligibility;
   readEnrollmentInventory?: typeof readEnrollmentInventory;
   inspectEnrollment?: typeof inspectEnrollment;
   reviewEnrollmentStatus?: typeof reviewEnrollmentStatus;
@@ -430,6 +436,10 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
   const applyFreeStatus = deps.applyFreeStatus ?? applySessionFreeStatus;
   const reviewCourse = deps.reviewCoursePublication ?? reviewCoursePublication;
   const applyCourse = deps.applyCoursePublication ?? applyCoursePublication;
+  const reviewLifecycle = deps.reviewCourseLifecycle ?? reviewCourseLifecycle;
+  const applyLifecycle = deps.applyCourseLifecycle ?? applyCourseLifecycle;
+  const courseDeletionEligibility = deps.reviewCourseDeletionEligibility ?? reviewCourseDeletionEligibility;
+  const sessionDeletionEligibility = deps.reviewSessionDeletionEligibility ?? reviewSessionDeletionEligibility;
   const readEnrollments =
     deps.readEnrollmentInventory ?? readEnrollmentInventory;
   const inspectManagedEnrollment = deps.inspectEnrollment ?? inspectEnrollment;
@@ -462,6 +472,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
     string,
     { review: CoursePublicationReview; used: boolean }
   >();
+  const courseLifecycleReviews = new Map<string, { review: CourseLifecycleReview; used: boolean }>();
   const enrollmentReviews = new Map<
     string,
     { review: EnrollmentReview; used: boolean }
@@ -548,6 +559,7 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
           ...JSON_HEADERS,
           "content-type": "text/javascript; charset=utf-8",
         });
+        res.write(`setTimeout(()=>{${COURSE_LIFECYCLE_CLIENT_JS}},0);\n`);
         return res.end(
           `${CLIENT_JS}\n${COURSE_PUBLICATION_CLIENT_JS}\n${LESSON_CLIENT_JS}\n${SESSION_FREE_CLIENT_JS}\n${SESSION_AVAILABILITY_CLIENT_JS.replaceAll("\n", "\\n")}\n${SESSION_EMERGENCY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_DEPLOY_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_BINDING_CLIENT_JS.replaceAll("\n", "\\n")}\n${VIDEO_RECOVERY_CLIENT_JS.replaceAll("\n", "\\n")}\n${RESOURCE_CLIENT_JS.replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_CLIENT_JS.replace("button.textContent='Protected Content'", "button.textContent='Operational details'").replace("catch(e){showError(e)}}async function enhanceProtectedActions", "catch(e){msg.textContent='Requires attention: protected-content details could not be verified.'}}async function enhanceProtectedActions").replaceAll("\n", "\\n")}\n${PROTECTED_CONTENT_TARGET_BINDING_JS}\n${LEGACY_VIDEO_BIND_CREATE_ONLY_CLIENT_JS}\n${ACCESS_CODE_CLIENT_JS}\n${ACCESS_CODE_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}\n${ENROLLMENT_MANAGEMENT_CLIENT_JS.replaceAll("\n", "\\n")}`,
         );
@@ -1600,6 +1612,40 @@ export function createOwnerConsoleServer(deps: OwnerConsoleDependencies) {
             record.used = false;
             throw error;
           }
+        }
+        if (url.pathname === "/api/courses/lifecycle/review") {
+          exactInput(input, ["courseId", "operation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          if (input.operation !== "archive" && input.operation !== "restore") return fail(res, 400);
+          const review = await reviewLifecycle(deps.db, input.courseId, input.operation);
+          const reviewId = randomBytes(24).toString("base64url");
+          courseLifecycleReviews.set(reviewId, { review, used: false });
+          return send(res, 200, { reviewId, review });
+        }
+        if (url.pathname === "/api/courses/lifecycle/apply") {
+          exactInput(input, ["reviewId", "confirmation"]);
+          await authorize(deps.auth, deps.ownerUid);
+          const reviewId = requiredString(input.reviewId);
+          const record = courseLifecycleReviews.get(reviewId);
+          if (!record || record.used) return fail(res, 409);
+          const phrase = record.review.operation === "archive" ? ARCHIVE_COURSE_CONFIRMATION : RESTORE_COURSE_CONFIRMATION;
+          if (input.confirmation !== phrase) return fail(res, 400);
+          record.used = true;
+          try {
+            const result = await applyLifecycle(deps.db, record.review, now());
+            courseLifecycleReviews.delete(reviewId);
+            return send(res, 200, { result });
+          } catch (error) { record.used = false; throw error; }
+        }
+        if (url.pathname === "/api/courses/delete-eligibility") {
+          exactInput(input, ["courseId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          return send(res, 200, { eligibility: await courseDeletionEligibility(deps.db, input.courseId) });
+        }
+        if (url.pathname === "/api/sessions/delete-eligibility") {
+          exactInput(input, ["courseId", "moduleId", "sessionId"]);
+          await authorize(deps.auth, deps.ownerUid);
+          return send(res, 200, { eligibility: await sessionDeletionEligibility(deps.db, { courseId: input.courseId, moduleId: input.moduleId, sessionId: input.sessionId }) });
         }
         if (url.pathname === "/api/courses/create") {
           exactInput(input, ["courseId", "title", "shortDescription"]);

@@ -1,4 +1,4 @@
-export type CourseStatus = "draft" | "published";
+export type CourseStatus = "draft" | "published" | "archived";
 
 export type Course = {
   readonly id: string;

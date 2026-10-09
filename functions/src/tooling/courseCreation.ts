@@ -139,7 +139,7 @@ export function validateTrustedCourseDocument(
   slug: string;
   title: string;
   shortDescription: string;
-  status: "draft" | "published";
+  status: "draft" | "published" | "archived";
 }> {
   const id = validateCourseId(courseId);
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -154,7 +154,7 @@ export function validateTrustedCourseDocument(
       "title",
     ]) ||
     data.slug !== id ||
-    (data.status !== "draft" && data.status !== "published")
+    (data.status !== "draft" && data.status !== "published" && data.status !== "archived")
   ) {
     throw new Error("Parent Course is malformed.");
   }

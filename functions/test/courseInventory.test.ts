@@ -8,7 +8,7 @@ import {
 function course(
   id: string,
   title: string,
-  status: "draft" | "published",
+  status: "draft" | "published" | "archived",
 ): TrustedCourseRecord {
   return {
     id,
@@ -49,6 +49,13 @@ test("returns valid draft and published Courses as the exact sanitized DTO", () 
     "status",
     "title",
   ]);
+});
+
+test("returns archived Courses for trusted Owner lifecycle inventory", () => {
+  const inventory = buildTrustedCourseInventory([
+    course("lifecycle-smoke-test", "Lifecycle Smoke Test", "archived"),
+  ]);
+  assert.equal(inventory[0]?.status, "archived");
 });
 
 test("mixed inventory sorts by title and then canonical document ID", () => {

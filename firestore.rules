@@ -84,7 +84,7 @@ service cloud.firestore {
         ])
         && isValidCourseId(courseId)
         && data.slug == courseId
-        && (data.status == "draft" || data.status == "published")
+        && (data.status == "draft" || data.status == "published" || data.status == "archived")
         && isValidCourseText(data.title, 160)
         && isValidCourseText(data.shortDescription, 1000);
     }
